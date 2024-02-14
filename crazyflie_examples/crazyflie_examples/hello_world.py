@@ -12,12 +12,14 @@ def main():
     swarm = Crazyswarm()
     timeHelper = swarm.timeHelper
     cf = swarm.allcfs.crazyflies[0]
-
+    print(123)
     cf.takeoff(targetHeight=1.0, duration=TAKEOFF_DURATION)
     timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
-    cf.land(targetHeight=0.04, duration=2.5)
-    timeHelper.sleep(TAKEOFF_DURATION)
-
-
+    print(123)
+    #cf.goTo([1.0,1.0,1.0],0.0, duration=TAKEOFF_DURATION)
+    for i in range(30):
+        cf.velWorld([0.1,0.1,0.1],0.0)
+        timeHelper.sleep(0.1)
+        
 if __name__ == "__main__":
     main()
