@@ -19,7 +19,7 @@ def main():
     #cf.goTo([1.0,1.0,1.0],0.0, duration=TAKEOFF_DURATION)
     for i in range(30):
         cf.velWorld([0.1,0.1,0.1],0.0)
-        timeHelper.sleep(0.11)
+        timeHelper.sleep(0.1)
         
 if __name__ == "__main__":
     main()

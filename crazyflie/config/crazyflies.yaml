@@ -9,30 +9,31 @@ robots:
   #   type: cf  # see robot_types
   #   # firmware_params:
   #   #   kalman:
-  #   #     pNAcc_xy: 1.0 # default 0.5
+  #   #     pNAcc_xy: 1.0 # default 0.50x
 
   cf_1:
     enabled: true
+    #uri: radio://0/100/2M/E7E7E7E7EB
     uri: udp://0.0.0.0:19850
-    initial_position: [0.0, 0.0, 0.0]
+    initial_position: [1.0, 0.0, 0.0]
     type: cf_sim  # see robot_types
 
   cf_2:
-    enabled: false 
+    enabled: false
     uri: udp://0.0.0.0:19851
-    initial_position: [1.0, 0.0, 0.0]
+    initial_position: [0.0, 2.0, 0.0]
     type: cf_sim  # see robot_types
 
   cf_3:
     enabled: false
     uri: udp://0.0.0.0:19852
-    initial_position: [0.0, 1.0, 0.0]
+    initial_position: [1.1, 1.1, 0.0]
     type: cf_sim  # see robot_types
 
   cf_4:
     enabled: false
     uri: udp://0.0.0.0:19853
-    initial_position: [1.0, 1.0, 0.0]
+    initial_position: [0.5, 0.5, 0.0]
     type: cf_sim  # see robot_types
 
   cf_5:
@@ -155,7 +156,7 @@ robots:
   #   initial_position: [4.0, 3.0, 0.0]
   #   type: cf_sim  # see robot_types
 
-  # cf_25:
+  # cf_25:azyflie_server-4] [INFO] [1707422178.835940597] [rclcpp]: signal_handler(signum=15)
   #   enabled: true
   #   uri: udp://0.0.0.0:19874
   #   initial_position: [4.0, 4.0, 0.0]
@@ -193,7 +194,7 @@ robot_types:
         #   vars: ["kalman.posInnoX", "kalman.posInnoY", "kalman.posInnoZ"]
   cf:
     motion_capture:
-      enabled: true
+      enabled: false
       # only if enabled; see motion_capture.yaml
       marker: cf_mpc
       dynamics: default

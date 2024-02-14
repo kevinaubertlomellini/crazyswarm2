@@ -21,7 +21,7 @@ from cflib.crazyflie.swarm import CachedCfFactory
 from cflib.crazyflie.swarm import Swarm
 from cflib.crazyflie.log import LogConfig
 
-from crazyflie_interfaces.srv import Takeoff, Land, GoTo, RemoveLogging, AddLogging
+from crazyflie_interfaces.srv import Takeoff, Land, VelWorld, GoTo, RemoveLogging, AddLogging
 from crazyflie_interfaces.srv import UploadTrajectory, StartTrajectory, NotifySetpointsStop
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult, ParameterType
 from crazyflie_interfaces.msg import Hover, AttitudeSetpoint
@@ -211,6 +211,7 @@ class CrazyflieServer(Node):
         self.create_service(Takeoff, "all/takeoff", self._takeoff_callback)
         self.create_service(Land, "all/land", self._land_callback)
         self.create_service(GoTo, "all/go_to", self._go_to_callback)
+        self.create_service(VelWorld, "all/vel_world", self._vel_world_callback)
         self.create_service(StartTrajectory, "all/start_trajectory", self._start_trajectory_callback)
 
         for uri in self.cf_dict:
@@ -225,6 +226,9 @@ class CrazyflieServer(Node):
             )
             self.create_service(
                 Land, name + "/land", partial(self._land_callback, uri=uri)
+            )
+            self.create_service(
+                VelWorld, name + "/vel_world", partial(self._vel_world_callback, uri=uri)
             )
             self.create_service(
                 GoTo, name + "/go_to", partial(self._go_to_callback, uri=uri)
@@ -785,6 +789,37 @@ class CrazyflieServer(Node):
                 duration,
                 relative=request.relative,
                 group_mask=request.group_mask,
+            )
+        return response
+
+    def _vel_world_callback(self, request, response, uri="all"):
+        """
+        Service callback to have the crazyflie go to 
+            a certain position in high level commander
+        """
+        self.get_logger().info(
+            "vel_world(velocidad%f,%f,%f m/s, yawrate=%f rad/s)"
+            % (
+                request.goal_vel.x,
+                request.goal_vel.y,
+                request.goal_vel.z,
+                request.yawrate,
+            )
+        )
+        if uri == "all":
+            for link_uri in self.uris:
+                self.swarm._cfs[link_uri].cf.commander.send_velocity_world_setpoint(
+                    request.goal_vel.x,
+                    request.goal_vel.y,
+                    request.goal_vel.z,
+                    request.yawrate,
+                )
+        else:
+            self.swarm._cfs[uri].cf.commander.send_velocity_world_setpoint(
+                request.goal_vel.x,
+                request.goal_vel.y,
+                request.goal_vel.z,
+                request.yawrate,
             )
         return response
 

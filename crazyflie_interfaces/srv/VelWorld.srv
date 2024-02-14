@@ -1,0 +1,3 @@
+geometry_msgs/Point goal_vel
+float32 yawrate # deg
+---

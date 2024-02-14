@@ -11,6 +11,8 @@ def main():
     timeHelper = swarm.timeHelper
     allcfs = swarm.allcfs
 
+    timeHelper.sleep(15)
+
     allcfs.takeoff(targetHeight=Z, duration=1.0+Z)
     timeHelper.sleep(1.5+Z)
     for cf in allcfs.crazyflies:

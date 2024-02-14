@@ -1,0 +1,25 @@
+{
+  "package_name": "crazyflie_interfaces",
+  "non_idl_tuples": [
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/AttitudeSetpoint.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/FullState.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/LogDataGeneric.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/Hover.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/LogBlock.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/Position.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/TrajectoryPolynomialPiece.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:msg/VelocityWorld.msg",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/GoTo.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/Land.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/Land2.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/NotifySetpointsStop.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/SetGroupMask.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/StartTrajectory.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/Stop.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/Takeoff.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/UpdateParams.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/UploadTrajectory.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/RemoveLogging.srv",
+    "/home/marhes/Llanes_ICRA2024/ros2_ws/src/crazyswarm2/crazyflie_interfaces:srv/AddLogging.srv"
+  ]
+}

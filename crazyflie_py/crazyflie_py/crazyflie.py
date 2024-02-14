@@ -22,7 +22,7 @@ from std_srvs.srv import Empty
 from geometry_msgs.msg import Point, Twist
 from rcl_interfaces.srv import GetParameters, SetParameters, ListParameters, DescribeParameters
 from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
-from crazyflie_interfaces.srv import Takeoff, Land, GoTo, UploadTrajectory, StartTrajectory, NotifySetpointsStop
+from crazyflie_interfaces.srv import Takeoff, Land, GoTo, VelWorld,UploadTrajectory, StartTrajectory, NotifySetpointsStop
 from crazyflie_interfaces.msg import TrajectoryPolynomialPiece, FullState, Position, AttitudeSetpoint
 
 def arrayToGeometryPoint(a):
@@ -114,6 +114,8 @@ class Crazyflie:
         # # self.stopService = rospy.ServiceProxy(prefix + "/stop", Stop)
         self.goToService = node.create_client(GoTo, prefix + "/go_to")
         self.goToService.wait_for_service()
+        self.velWorldService = node.create_client(VelWorld, prefix + "/vel_world")
+        self.velWorldService.wait_for_service()
         self.uploadTrajectoryService = node.create_client(UploadTrajectory, prefix + "/upload_trajectory")
         self.uploadTrajectoryService.wait_for_service()
         self.startTrajectoryService = node.create_client(StartTrajectory, prefix + "/start_trajectory")
@@ -334,6 +336,24 @@ class Crazyflie:
         req.yaw = float(yaw)
         req.duration = rclpy.duration.Duration(seconds=duration).to_msg()
         self.goToService.call_async(req)
+    
+    def velWorld(self, goal_vel, yawrate):
+        """
+        Args:
+            goal (iterable of 3 floats): The goal position. Meters.
+            yaw (float): The goal yaw angle (heading). Radians.
+            duration (float): How long until the goal is reached. Seconds.
+            relative (bool): If true, the goal position is interpreted as a
+                relative offset from the current position. Otherwise, the goal
+                position is interpreted as absolute coordintates in the global
+                reference frame.
+            groupMask (int): Group mask bits. See :meth:`setGroupMask()` doc.
+        """
+        req = VelWorld.Request()
+        req.goal_vel = arrayToGeometryPoint(goal_vel)
+        req.yawrate = float(yawrate)
+        self.velWorldService.call_async(req)
+
 
     def uploadTrajectory(self, trajectoryId, pieceOffset, trajectory):
         """Uploads a piecewise polynomial trajectory for later execution.
