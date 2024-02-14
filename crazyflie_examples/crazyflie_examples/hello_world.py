@@ -11,15 +11,19 @@ HOVER_DURATION = 5.0
 def main():
     swarm = Crazyswarm()
     timeHelper = swarm.timeHelper
-    cf = swarm.allcfs.crazyflies[0]
-    print(123)
-    cf.takeoff(targetHeight=1.0, duration=TAKEOFF_DURATION)
+    cf0 = swarm.allcfs.crazyflies[0]
+    cf1 = swarm.allcfs.crazyflies[1]
+    cf0.takeoff(targetHeight=1.0, duration=TAKEOFF_DURATION)
+    cf1.takeoff(targetHeight=1.0, duration=TAKEOFF_DURATION)
     timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
-    print(123)
-    #cf.goTo([1.0,1.0,1.0],0.0, duration=TAKEOFF_DURATION)
-    for i in range(30):
-        cf.velWorld([0.1,0.1,0.1],0.0)
-        timeHelper.sleep(0.2)
-        
+    for i in range(50):
+        cf0.velWorld([0.25,0.0,0.0],0.0)
+        cf1.velWorld([0.0,0.1,0.0],0.0)
+        timeHelper.sleep(0.1)
+    for i in range(60):
+        cf0.velWorld([0.0,0.0,-0.1],0.0)
+        cf1.velWorld([0.0,0.0,-0.1],0.0)
+        timeHelper.sleep(0.1)
+
 if __name__ == "__main__":
     main()
