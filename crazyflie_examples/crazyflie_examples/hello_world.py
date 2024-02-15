@@ -21,10 +21,10 @@ class PosSubscriber(Node):
         self.subscription  # prevent unused variable warning
 
     def listener_callback(self, msg):
-    	global cf0_position
-    	cf0_position[0]=msg.pose.position.x
-    	cf0_position[1]=msg.pose.position.y
-    	cf0_position[2]=msg.pose.position.z
+        global cf0_position
+        cf0_position[0]=msg.pose.position.x
+        cf0_position[1]=msg.pose.position.y
+        cf0_position[2]=msg.pose.position.z
     
 def main():
     swarm = Crazyswarm()
