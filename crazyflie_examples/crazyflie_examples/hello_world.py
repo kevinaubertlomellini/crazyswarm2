@@ -36,13 +36,6 @@ def main():
     timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
     cf0.takeoff(targetHeight=1.0, duration=TAKEOFF_DURATION)
     timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
-    for i in range(50):
-        cf0.velWorld([0.1,0.1,0.1],0.0)
-        timeHelper.sleep(0.1)
-        rclpy.spin_once(position_subscriber2)
-        print(cf0_position)
-    
-    cf0.notifySetpointsStop()
     cf0.land(targetHeight=0.03, duration=5.0)
     timeHelper.sleep(3.0)
         

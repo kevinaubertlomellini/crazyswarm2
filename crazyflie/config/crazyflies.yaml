@@ -13,26 +13,27 @@ robots:
 
   cf_1:
     enabled: true
-    #uri: radio://0/100/2M/E7E7E7E7EB
-    uri: udp://0.0.0.0:19850
+    uri: radio://0/100/2M/E7E7E7E705
+    #uri: udp://0.0.0.0:19850
     initial_position: [1.0, 0.0, 0.0]
     type: cf_sim  # see robot_types
 
   cf_2:
-    enabled: false
-    uri: udp://0.0.0.0:19851
+    enabled: true
+    #uri: udp://0.0.0.0:19851
+    uri: radio://0/100/2M/E7E7E7E706
     initial_position: [0.0, 1.0, 0.0]
     type: cf_sim  # see robot_types
 
   cf_3:
-    enabled: false
-    uri: udp://0.0.0.0:19852
+    enabled: true
+    uri: radio://0/100/2M/E7E7E7E709
     initial_position: [1.1, 1.1, 0.0]
     type: cf_sim  # see robot_types
 
   cf_4:
-    enabled: false
-    uri: udp://0.0.0.0:19853
+    enabled: true
+    uri: radio://0/100/2M/E7E7E7E701
     initial_position: [0.5, 0.5, 0.0]
     type: cf_sim  # see robot_types
 
