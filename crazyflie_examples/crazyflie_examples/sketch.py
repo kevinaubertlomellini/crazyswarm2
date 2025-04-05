@@ -54,28 +54,26 @@ class CO2:
 
 class Drone:
 
-    def __init__(self, threshold, latest_gradient):
+    def __init__(self, threshold, latest_gradient, distance_sqrt_lambda):
         self.threshold = threshold
         self.position_reading_queue = []
         self.gradient = latest_gradient
         self.crossing_point = None
         self.before_crossing = None
         self.position = None
+        self.distance_sqrt_lambda = distance_sqrt_lambda
 
-    def update(self, position):
+    def update(self, position, partner_drone):
 
-        if len(self.position_reading_queue) == 0 or not position == self.position_reading_queue[-1]:
+        if position.value > 420 and (len(self.position_reading_queue) == 0 or not position == self.position_reading_queue[-1]):
             self.position_reading_queue.append(position)
 
-        while len(self.position_reading_queue) > 3:
+        while len(self.position_reading_queue) > 3 and magnitude(difference_in_meters(self.position_reading_queue[0], self.position_reading_queue[-1])) > self.distance_sqrt_lambda:
             self.position_reading_queue.pop(0)
 
-        if self.position is not None and (
-                (position.value > self.threshold) == (self.position.value <= self.threshold)) and len(
-                self.position_reading_queue) == 3:
-            self.crossing_point = position if math.fabs(position.value - self.threshold) > math.fabs(
-                self.position.value - self.threshold) else self.position
-            self.gradient = calculate_lsq(self.position_reading_queue)
+        if self.position is not None and ((position.value > self.threshold) == (self.position.value <= self.threshold)) and len(self.position_reading_queue) >= 3:
+            self.crossing_point = position if math.fabs(position.value - self.threshold) > math.fabs(self.position.value - self.threshold) else self.position
+            self.gradient = calculate_lsq(self.position_reading_queue + partner_drone.position_reading_queue)
 
             self.position = position
 
@@ -172,29 +170,34 @@ class PositionVector:
 
 
 def calculate_lsq(reading_queue):
-    matrix22 = [difference_in_meters(reading_queue[0], reading_queue[1]),
-                difference_in_meters(reading_queue[2], reading_queue[1])]
+    if len(reading_queue) < 3:
+        raise ValueError("At least 3 readings are required")
 
-    matrix22[0][1] = matrix22[0][1] / (matrix22[0][0] + 1e-9)
-    matrix22[1][1] = matrix22[1][1] / (matrix22[1][0] + 1e-9)
+    n = len(reading_queue)
+    matrix = []
+    values = []
 
-    values = [reading_queue[0].value - reading_queue[1].value,
-              reading_queue[2].value - reading_queue[1].value]
+    for i in range(n):
+        # if i == 1:
+        #     continue
 
-    values[0] = values[0] / (matrix22[0][0] + 1e-9)
-    values[1] = values[1] / (matrix22[1][0] + 1e-9)
+        diff = difference_in_meters(reading_queue[i], reading_queue[1])
+        # diff[1] = diff[1] / (diff[0] + 1e-9)
 
-    matrix22[0][0] = 1
-    matrix22[1][0] = 1
+        value = reading_queue[i].value - reading_queue[1].value
+        # value = value / (diff[0] + 1e-9)
+        values.append(value)
+        # diff[0] = 1
+        matrix.append(diff)
 
-    m = np.linalg.lstsq(matrix22, values, rcond=None)[0]
+    m = np.linalg.lstsq(matrix, values, rcond=None)[0]
 
     return unitary(m)
 
 
 def calculate_angle(one, two):
     intermediate = ((one[0] * two[0]) + (one[1] * two[1])) / (np.linalg.norm(one) * np.linalg.norm(two))
-    if intermediate > 1:
+    if intermediate > 1 or intermediate < -1:
         intermediate = 1
     return math.acos(intermediate)
 
@@ -294,8 +297,8 @@ class Sketch:
     INITIAL_ORIENTATION = True
 
     def __init__(self, distance_sqrt_lambda, lambda_value, threshold, starting_direction=None, latest_gradient=None):
-        self.drone1 = Drone(threshold, latest_gradient)
-        self.drone2 = Drone(threshold, latest_gradient)
+        self.drone1 = Drone(threshold, latest_gradient, distance_sqrt_lambda)
+        self.drone2 = Drone(threshold, latest_gradient, distance_sqrt_lambda)
 
         self.distance_sqrt_lambda = distance_sqrt_lambda
         self.distance_lambda = self.distance_sqrt_lambda * lambda_value / (math.sqrt(lambda_value))
@@ -314,10 +317,10 @@ class Sketch:
 
     def update(self, d1, d2):
 
-        update_result = self.drone2.update(d2)
+        update_result = self.drone2.update(d2, self.drone1)
         if update_result is not None:
             [self.latest_crossing_point, self.latest_point_before_crossing, self.latest_gradient] = update_result
-        update_result = self.drone1.update(d1)
+        update_result = self.drone1.update(d1, self.drone2)
         if update_result is not None:
             [self.latest_crossing_point, self.latest_point_before_crossing, self.latest_gradient] = update_result
 
@@ -411,16 +414,14 @@ class Sketch:
         # print(f"angle_to: {angle_to(self.target_position_vector, self.d1_before_crossing, self.d1)} {i * a} {polygon_facing_crossing()}")
 
         #   while neither robot has crossed the boundary do
-        if self.inside(drone1) == was_inside and self.inside(drone2) == was_inside:
+        while self.inside(drone1) == was_inside and self.inside(drone2) == was_inside:
             print("back to point")
             #       D1 moves towards point p taking steps of length λ.
             #       D2 moves to closest point from it that is √λ distance away from D1 and orthogonal to D1’s direction.
             #   if self.latest_point_before_crossing is not None:
-            direction_back = difference_in_meters(self.latest_point_before_crossing, drone1.position)
+            direction_back = unitary(difference_in_meters(self.latest_point_before_crossing, drone1.position))
             self.target_position_vector = self.forward_by_vector(self.drone1, self.drone2, direction_back)
-            yield from self.until(self.target_position_vector,
-                                  lambda: self.moved_forward_lambda(self.target_position_vector, self.drone1,
-                                                                    self.drone2))
+            yield from self.until(self.target_position_vector, lambda: self.moved_forward_lambda(self.target_position_vector, self.drone1, self.drone2))
         #   if D2 crossed the boundary then
         if self.inside(drone2) != was_inside:
             # SYNCHRONIZE (D1, D2)
@@ -589,9 +590,8 @@ class Sketch:
 
         target_angle = math.fabs(target_position_vector.a)
 
-        intermediate = ((target_offset[0] * hyp[0]) + (target_offset[1] * hyp[1])) / (
-                    magnitude(target_offset) * magnitude(hyp))
-        if intermediate > 1:
+        intermediate = ((target_offset[0] * hyp[0]) + (target_offset[1] * hyp[1])) / (magnitude(target_offset) * magnitude(hyp))
+        if intermediate > 1 or intermediate < -1:
             intermediate = 1
         angle = math.acos(intermediate)
 
@@ -665,6 +665,8 @@ class SketchAction:
             partner_drone = self.drone_stream_factory.get_drone(self.partner)
             self_drone = self.drone_stream_factory.get_drone(self.id)
 
+            self.navigate([[0,0]])
+
             self.navigate_subscription = rx.combine_latest(
                 partner_drone.get_position(),
                 self_drone.get_position(),
@@ -724,14 +726,18 @@ class SketchAction:
         turning = self.calculate_turn(partner_position, self_position, positionVector)
         offset_error_correction = self.calculate_error_correction(partner_position, self_position, positionVector)
 
-        gain_offset = 0.9
-        gain_tandem = 0.9
-        gain_turning = 1
-        gain_angle_tandem = 2
+        gain_offset = 0.01
+        gain_tandem = 1.0
+        gain_turning = 0.01
+        gain_angle_tandem = 0.01
 
         
 
-        return [gain_tandem*tandem_offset, gain_angle_tandem*tandem_angle, straight_line, gain_turning*turning, gain_offset*offset_error_correction]
+        # return [gain_tandem*tandem_offset, gain_angle_tandem*tandem_angle, straight_line, gain_turning*turning, gain_offset*offset_error_correction]
+
+        flight_vectors = [tandem_offset, tandem_angle, straight_line, offset_error_correction, turning]
+        print([f'{magnitude(v):.2f}' for v in flight_vectors])
+        return flight_vectors
 
     def calculate_tandem_offset(self, partner_position, self_position):
         distance_m = difference_in_meters(partner_position, self_position)
@@ -741,7 +747,7 @@ class SketchAction:
         offset_magnitude = magnitude(position_offset)
 
         #tandem_distance = position_offset * (2 / max(0.015, offset_magnitude))
-        tandem_distance = position_offset * (2 / max(0.015, offset_magnitude))
+        tandem_distance = position_offset * (0.5 / max(0.1, offset_magnitude))
         return tandem_distance
 
     @staticmethod
@@ -753,6 +759,7 @@ class SketchAction:
 
             direction_vector = np.array([position_vector.x, position_vector.y])
 
+
             return -2 * (np.dot(offset_unitary, direction_vector)) * direction_vector
         elif position_vector.movement == TURN:
             prev_vector = [position_vector.x, position_vector.y]
@@ -761,14 +768,14 @@ class SketchAction:
 
             offset_unitary = unitary(difference_in_meters(self_position, partner_position))
 
-            return -(np.dot(offset_unitary, direction)) * direction
+            return -2 * np.dot(offset_unitary, direction) * direction
         else:
             return [0, 0]
 
     @staticmethod
     def calculate_straight_line(position_vector):
         if position_vector.movement == FORWARD:
-            return [3 * position_vector.x, 3 * position_vector.y]
+            return [position_vector.x, position_vector.y]
         else:
             return [0, 0]
 
@@ -781,7 +788,7 @@ class SketchAction:
             self_center_distance = magnitude(self_center)
             partner_center_distance = magnitude(difference_in_meters(center, partner_position))
 
-            base_velocity = 3
+            base_velocity = 1
 
             if self_center_distance > partner_center_distance:
                 velocity = base_velocity
@@ -796,7 +803,12 @@ class SketchAction:
             rotated_vector = rotate_vector([position_vector.x, position_vector.y], angle)
 
             forward_force = np.array(rotated_vector) * velocity
-            centripetal_force = np.array(vector_to_center) * 0.4* velocity / self_center_distance
+            # if self_center_distance > 0:
+            #     centripetal_force_magnitude = (velocity ** 2) / self_center_distance
+            #     centripetal_force = np.array(vector_to_center) * centripetal_force_magnitude
+            # else:
+            #     centripetal_force = np.array([0, 0])
+            centripetal_force = np.array(vector_to_center) * 0.2 * velocity / self_center_distance
 
             return forward_force + centripetal_force
         else:
@@ -814,7 +826,7 @@ class SketchAction:
 
             magnitude_calc = magnitude(vector_to_line)
 
-            max_magnitude = 0.1
+            max_magnitude = 1.0
 
             if magnitude_calc > max_magnitude:
                 return vector_to_line / (magnitude_calc / max_magnitude)

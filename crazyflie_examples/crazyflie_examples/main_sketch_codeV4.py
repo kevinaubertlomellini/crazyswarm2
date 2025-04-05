@@ -108,16 +108,18 @@ class Drone:
         self.dt = delta_time
 
     def update_velocity(self, desired_velocity, cf,uav,aux):
-        desired_acceleration = tuple((dv - v) / self.dt for v, dv in zip(self.velocity, desired_velocity))
-        
-        '''
-        acceleration_magnitude = np.linalg.norm(desired_acceleration)
-        if acceleration_magnitude > self.max_acceleration[uav]:
-            desired_acceleration = tuple(
-                a / acceleration_magnitude * self.max_acceleration[uav] for a in desired_acceleration)
-        print('Desired acc', desired_acceleration)
-        self.velocity = tuple(v + a * self.dt for v, a in zip(self.velocity, desired_acceleration))
-        cf.velWorld([self.velocity[0], self.velocity[1], 0.0], 0.0)
+        velocity_scalar = 5
+        # desired_acceleration = tuple((dv - v) / self.dt for v, dv in zip(self.velocity, desired_velocity))
+        #
+        #
+        # acceleration_magnitude = np.linalg.norm(desired_acceleration)
+        # if acceleration_magnitude > self.max_acceleration[uav]:
+        #     desired_acceleration = tuple(
+        #         a / acceleration_magnitude * self.max_acceleration[uav] for a in desired_acceleration)
+        # print('Desired acc', desired_acceleration, 'velocity', self.velocity)
+        # self.velocity = tuple(v + a * self.dt for v, a in zip(self.velocity, desired_acceleration))
+        cf.velWorld([velocity_scalar * desired_velocity[0], velocity_scalar * desired_velocity[1], 0.0], 0.0)
+        #print('actual vel: ', self.velocity)
         '''
         
         self.velocity=desired_velocity
@@ -130,13 +132,18 @@ class Drone:
         desired_position = tuple(float(v) + float(a) * self.dt for v, a in zip(aux, self.velocity))
         print([desired_position[0],desired_position[1],1.0])
         '''
+        '''
         
+        '''
         '''
         if uav==0:
             altitud=0.92
         else:
             altitud=1.1
+        '''
+        '''
         cf.goTo([desired_position[0],desired_position[1],altitud], 0.0, delta_time)
+        '''
 
         '''
         print('Desired vel',self.velocity)
@@ -146,14 +153,18 @@ class Drone:
 
     def update_position(self, cf_position, crazyflie):
 
-        if crazyflie == 1:
-            longitude = self.start_lat_lon.longitude + ((cf_position[0] - 0.8) / (
-                    math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
-            latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.2) / (EARTH_CIRCUMFERENCE / 360))
-        else:
-            longitude = self.start_lat_lon.longitude + ((cf_position[0] - 1.2) / (
-                    math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
-            latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.05) / (EARTH_CIRCUMFERENCE / 360))
+        # if crazyflie == 1:
+        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 0.8) / (
+        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
+        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.2) / (EARTH_CIRCUMFERENCE / 360))
+        # else:
+        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 1.2) / (
+        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
+        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.05) / (EARTH_CIRCUMFERENCE / 360))
+
+        longitude = self.start_lat_lon.longitude + ((cf_position[0]) / (
+                math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
+        latitude = self.start_lat_lon.latitude + ((cf_position[1]) / (EARTH_CIRCUMFERENCE / 360))
 
         return LatLon(latitude, longitude)
 
@@ -229,8 +240,8 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
 
     cf0 = allcfs.crazyflies[0]
     cf1 = allcfs.crazyflies[1]
-    drone1_id = 'cf_2'
-    drone2_id = 'cf_4'
+    drone1_id = 'cf_1'
+    drone2_id = 'cf_2'
 
     timeHelper.sleep(1.0)
     configs = [
@@ -316,11 +327,11 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
                 rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)
                 rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
                 if drone.drone_id == drone1_id:
-                    df1v = [0,0]
                     aux1 = drone.position[-1, :]
+                    df1v = drone.velocity[-1, :]
+                    print(df1v)
                     df1p = df1.update_position(drone.position[-1, :], 1)
                 elif drone.drone_id == drone2_id:
-                    df2v = [0,0]
                     df2p = df2.update_position(drone.position[-1, :], 2)
                     aux2 = drone.position[-1, :]
 
@@ -339,13 +350,13 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
 
             for drone in drones:
                 if drone.drone_id == drone1_id:
-                    df1v = df1.update_velocity(np.array(df1SetVelocity.pipe(ops.first()).run()) /45, cf0,0,aux1)
-                    drone.des_velocity = np.append(drone.des_velocity,[[df1v[0], df1v[1], 0]], axis=0)
+                    df1v_des = df1.update_velocity(np.array(df1SetVelocity.pipe(ops.first()).run()) /45, cf0,0,aux1)
+                    drone.des_velocity = np.append(drone.des_velocity,[[df1v_des [0], df1v_des [1], 0]], axis=0)
                     tf = time.time()
                     drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)
                 elif drone.drone_id == drone2_id:
-                    df2v = df2.update_velocity(np.array(df2SetVelocity.pipe(ops.first()).run()) /45, cf1,1,aux2)
-                    drone.des_velocity = np.append(drone.des_velocity, [[df2v[0], df2v[1], 0]], axis=0)
+                    df2v_des = df2.update_velocity(np.array(df2SetVelocity.pipe(ops.first()).run()) /45, cf1,1,aux2)
+                    drone.des_velocity = np.append(drone.des_velocity, [[df2v_des[0], df2v_des[1], 0]], axis=0)
                     tf = time.time()
                     drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)
 
@@ -354,7 +365,7 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
             df2latitudes.append(df2p.latitude)
             df2longitudes.append(df2p.longitude)
 
-            timeHelper.sleep(delta_time + 0.1)
+            timeHelper.sleep(0.1)
 
     except KeyboardInterrupt:
         print("Keyboard interrupt, triggering landing sequence")
@@ -420,15 +431,15 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
 
 def main(args=None) -> None:
     plumes = [
-        Plume(LatLon(35.1973, -106.5972), -30, 12000, 2.0)
+        Plume(LatLon(35.1973, -106.59719), -30, 12000, 2.0)
     ]
 
-    threshold = 660
+    threshold = 640
 
     df1p = LatLon(35.197283, -106.5971785)
-    df2p = LatLon(35.197283, -106.5971755)
+    df2p = LatLon(35.197283, -106.5971785)
 
-    run_sketch(df1p, df2p, 0.3, 0.001, plumes, threshold, iterations=1000, base_file_name='single_plume')
+    run_sketch(df1p, df2p, 0.4, 0.01, plumes, threshold, iterations=1300, base_file_name='single_plume')
 
 if __name__ == "__main__":
     main()
