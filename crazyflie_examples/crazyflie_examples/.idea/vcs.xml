@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$/../.." vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../crazyflie/deps/crazyflie_tools" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../crazyflie/deps/crazyflie_tools/crazyflie_cpp" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../crazyflie/deps/crazyflie_tools/crazyflie_cpp/crazyflie-link-cpp" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../crazyflie/deps/crazyflie_tools/crazyflie_cpp/crazyflie-link-cpp/libusb" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../crazyflie/deps/crazyflie_tools/crazyflie_cpp/crazyflie-link-cpp/pybind11" vcs="Git" />
+  </component>
+</project>

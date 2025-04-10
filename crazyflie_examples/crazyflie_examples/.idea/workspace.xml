@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="b88587fe-3780-4724-8aec-ccd21327bcbd" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/sketch_double_plume.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/sketch_single_plume.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../crazyflie/config/config.rviz" beforeDir="false" afterPath="$PROJECT_DIR$/../../crazyflie/config/config.rviz" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../crazyflie/config/crazyflies.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/../../crazyflie/config/crazyflies.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main_sketch_codeV4.py" beforeDir="false" afterPath="$PROJECT_DIR$/main_sketch_codeV4.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/sketch.py" beforeDir="false" afterPath="$PROJECT_DIR$/sketch.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../setup.cfg" beforeDir="false" afterPath="$PROJECT_DIR$/../setup.cfg" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/../.." />
+    <option name="ROOT_SYNC" value="DONT_SYNC" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 2
+}</component>
+  <component name="ProjectId" id="2vH0yoXBIYFm0JUNt3q4vi43t9X" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;sitl&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/home/marhes_1/Crazyflie/CrazyflieSimulator/ros2_ws/src/crazyswarm2/crazyflie_examples/crazyflie_examples&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+    </key>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-1632447f56bf-JavaScript-PY-243.26053.29" />
+        <option value="bundled-python-sdk-b1dbf8ef85a6-4df51de95216-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-243.26053.29" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="b88587fe-3780-4724-8aec-ccd21327bcbd" name="Changes" comment="" />
+      <created>1743786948618</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1743786948618</updated>
+      <workItem from="1743786949714" duration="9148000" />
+      <workItem from="1743880561869" duration="13709000" />
+      <workItem from="1743967272918" duration="21402000" />
+      <workItem from="1744046550028" duration="8000" />
+      <workItem from="1744055124391" duration="11288000" />
+      <workItem from="1744082594901" duration="303000" />
+      <workItem from="1744148348057" duration="1788000" />
+      <workItem from="1744150152319" duration="840000" />
+      <workItem from="1744151785227" duration="438000" />
+      <workItem from="1744152879976" duration="767000" />
+      <workItem from="1744158610549" duration="3000" />
+      <workItem from="1744159562018" duration="1000" />
+      <workItem from="1744161816085" duration="26000" />
+      <workItem from="1744215880507" duration="1906000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

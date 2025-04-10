@@ -1,0 +1,1371 @@
+Index: sketch.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>#!/usr/bin/env python3\r\nimport math\r\nimport rx\r\nimport rx.operators as ops\r\nimport numpy as np\r\nimport matplotlib.pyplot as plt\r\nfrom skimage import measure\r\nimport os\r\nimport pandas as pd\r\nfrom datetime import datetime, timedelta\r\nfrom shapely.geometry import Polygon, Point\r\nfrom geopy.distance import geodesic\r\nfrom matplotlib.patches import Polygon as MPolygon\r\n\r\nfrom rx.subject import Subject, BehaviorSubject\r\n\r\nEARTH_CIRCUMFERENCE = 40008000\r\nFORWARD = \"forward\"\r\nTURN = \"turn\"\r\nSYNCHRONIZE = \"synchronize\"\r\n\r\n\r\nclass LatLon:\r\n\r\n    def __init__(self, latitude, longitude):\r\n        self.latitude = latitude\r\n        self.longitude = longitude\r\n\r\n    def __str__(self):\r\n        return f\"lat: {self.latitude}, lon: {self.longitude}\"\r\n\r\n    def __eq__(self, other):\r\n        return isinstance(other, LatLon) and self.latitude == other.latitude and self.longitude == other.longitude\r\n\r\n    def __hash__(self):\r\n        return hash((self.latitude, self.longitude))\r\n\r\n\r\nclass Plume:\r\n\r\n    def __init__(self, source, wind_direction, q, u):\r\n        self.source = source\r\n        self.wind_direction = wind_direction\r\n        self.q = q\r\n        self.k = 2\r\n        self.u = u\r\n\r\n\r\nclass CO2:\r\n\r\n    def __init__(self, ppm):\r\n        self.ppm = ppm\r\n\r\n\r\nclass Drone:\r\n\r\n    def __init__(self, threshold, latest_gradient, distance_sqrt_lambda):\r\n        self.threshold = threshold\r\n        self.position_reading_queue = []\r\n        self.gradient = latest_gradient\r\n        self.crossing_point = None\r\n        self.before_crossing = None\r\n        self.position = None\r\n        self.distance_sqrt_lambda = distance_sqrt_lambda\r\n\r\n    def update(self, position, partner_drone):\r\n\r\n        if position.value > 420 and (len(self.position_reading_queue) == 0 or not position == self.position_reading_queue[-1]):\r\n            self.position_reading_queue.append(position)\r\n\r\n        while len(self.position_reading_queue) > 3 and magnitude(difference_in_meters(self.position_reading_queue[0], self.position_reading_queue[-1])) > self.distance_sqrt_lambda:\r\n            self.position_reading_queue.pop(0)\r\n\r\n        if self.position is not None and ((position.value > self.threshold) == (self.position.value <= self.threshold)) and len(self.position_reading_queue) >= 3:\r\n            self.crossing_point = position if math.fabs(position.value - self.threshold) > math.fabs(self.position.value - self.threshold) else self.position\r\n            self.gradient = calculate_lsq(self.position_reading_queue + partner_drone.position_reading_queue)\r\n\r\n            self.position = position\r\n\r\n            return [self.crossing_point, self.before_crossing, self.gradient]\r\n\r\n        self.position = position\r\n        return None\r\n\r\n    def update_before_crossing(self):\r\n        self.before_crossing = self.position\r\n\r\n    def clear_crossing(self):\r\n        self.before_crossing = None\r\n\r\n\r\nclass ReadingPosition:\r\n\r\n    def __init__(self, latitude, longitude, value):\r\n        self.latitude = latitude\r\n        self.longitude = longitude\r\n        self.value = value\r\n\r\n    def __str__(self):\r\n        return f\"{self.latitude} {self.longitude}, v:{self.value}\"\r\n\r\n    def __eq__(self, other):\r\n        return self.latitude == other.latitude and self.longitude == other.longitude and self.value == other.value\r\n\r\n\r\nclass DroneStream:\r\n\r\n    def __init__(self, name, position_subject, velocity_subject, co2_subject):\r\n        self.name = name\r\n\r\n        self.mean = 0\r\n        self.std_dev = 0\r\n        self.position_subject = position_subject\r\n        self.velocity_subject = velocity_subject\r\n        self.co2_subject = co2_subject\r\n\r\n    def set_co2_statistics(self, mean, std_dev):\r\n        self.mean = mean\r\n        self.std_dev = std_dev\r\n\r\n    def get_position(self):\r\n        return self.position_subject\r\n\r\n    def get_velocity(self):\r\n        return self.velocity_subject\r\n\r\n    def get_co2(self):\r\n        return self.co2_subject\r\n\r\n\r\nclass DroneStreamFactory:\r\n\r\n    def __init__(self):\r\n        self.drones = {}\r\n\r\n    def put_drone(self, name, position_subject, velocity_subject, co2_subject):\r\n        self.drones[name] = DroneStream(name, position_subject, velocity_subject, co2_subject)\r\n\r\n    def get_drone(self, name):\r\n        return self.drones[name]\r\n\r\n\r\nclass PositionVector:\r\n    a = 0\r\n\r\n    def __init__(self, movement=FORWARD, position=None, x=0, y=0, distance=0, radius=0, center=0, a=0, p=0):\r\n        pass\r\n        self.movement = movement\r\n        self.position = position\r\n        self.x = x\r\n        self.y = y\r\n        self.distance = distance\r\n        self.radius = radius\r\n        self.center = center\r\n        self.a = a\r\n        self.p = p\r\n\r\n    def __hash__(self):\r\n        # Hash based on movement and position attributes\r\n        return hash((self.movement, self.position))\r\n\r\n    def __eq__(self, other):\r\n        # Check equality based on movement and position attributes\r\n        return isinstance(other, PositionVector) and \\\r\n            self.movement == other.movement and \\\r\n            self.position == other.position\r\n\r\n    def __str__(self):\r\n        return f\"PositionVector(movement={self.movement}, position={self.position}, x={self.x}, y={self.y}, distance={self.distance}, radius={self.radius}, center={self.center}, a={self.a}, p={self.p})\"\r\n\r\n\r\ndef calculate_lsq(reading_queue):\r\n    if len(reading_queue) < 3:\r\n        raise ValueError(\"At least 3 readings are required\")\r\n\r\n    n = len(reading_queue)\r\n    matrix = []\r\n    values = []\r\n\r\n    for i in range(n):\r\n        # if i == 1:\r\n        #     continue\r\n\r\n        diff = difference_in_meters(reading_queue[i], reading_queue[1])\r\n        # diff[1] = diff[1] / (diff[0] + 1e-9)\r\n\r\n        value = reading_queue[i].value - reading_queue[1].value\r\n        # value = value / (diff[0] + 1e-9)\r\n        values.append(value)\r\n        # diff[0] = 1\r\n        matrix.append(diff)\r\n\r\n    m = np.linalg.lstsq(matrix, values, rcond=None)[0]\r\n\r\n    return unitary(m)\r\n\r\n\r\ndef calculate_angle(one, two):\r\n    intermediate = ((one[0] * two[0]) + (one[1] * two[1])) / (np.linalg.norm(one) * np.linalg.norm(two))\r\n    if intermediate > 1 or intermediate < -1:\r\n        intermediate = 1\r\n    return math.acos(intermediate)\r\n\r\n\r\ndef difference_in_meters(one, two):\r\n    return [\r\n        ((one.longitude - two.longitude) * (EARTH_CIRCUMFERENCE / 360) * math.cos(math.radians(one.latitude))),\r\n        ((one.latitude - two.latitude) * (EARTH_CIRCUMFERENCE / 360))\r\n    ]\r\n\r\n\r\ndef latlon_plus_meters(position, offset):\r\n    longitude = position.longitude + (\r\n                (offset[0]) / (math.cos(math.radians(position.latitude)) * (EARTH_CIRCUMFERENCE / 360)))\r\n    latitude = position.latitude + ((offset[1]) / (EARTH_CIRCUMFERENCE / 360))\r\n    return LatLon(latitude, longitude)\r\n\r\n\r\ndef calculate_co2_xy(latitude, longitude, plumes):\r\n    return calculate_co2(LatLon(latitude, longitude), plumes)\r\n\r\n\r\ndef calculate_co2(position, plumes):\r\n    value = 0\r\n    for plume in plumes:\r\n\r\n        [y, x] = rotate_vector(difference_in_meters(position, plume.source), plume.wind_direction * math.pi / 180)\r\n        if x < 0:\r\n            # Simple gaussian plume model adapted from: https://epubs.siam.org/doi/pdf/10.1137/10080991X\r\n            # See equation 3.10, page 358.\r\n            h = 2  # m Height\r\n            value += (plume.q / (2 * math.pi * plume.k * -x)) * math.exp(\r\n                - (plume.u * ((pow(y, 2) + pow(h, 2))) / (4 * plume.k * -x)))\r\n\r\n    if value < 0:\r\n        return 420.0\r\n    else:\r\n        return 420.0 + value\r\n\r\n\r\ndef unitary(vector):\r\n    vector_magnitude = np.linalg.norm(vector)\r\n    if vector_magnitude == 0 and vector[0] == 0:\r\n        return vector\r\n    return np.array([vector[0] / vector_magnitude, vector[1] / vector_magnitude])\r\n\r\n\r\ndef rotate_vector(vector, angle):\r\n    rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)],\r\n                                [np.sin(angle), np.cos(angle)]])\r\n    return np.dot(rotation_matrix, vector)\r\n\r\n\r\ndef average(one, two):\r\n    return LatLon((one.latitude + two.latitude) / 2, (one.longitude + two.longitude) / 2)\r\n\r\n\r\ndef calculate_turn_center(token, distance_lambda):\r\n    direction_vector = [token.x, token.y]\r\n    rotated_direction_vector = rotate_vector(direction_vector, token.a)\r\n    # print(f\"rotate: {direction_vector} by {token.a}\")\r\n\r\n    opposite = np.array(unitary(rotated_direction_vector)) * (distance_lambda / 2)\r\n    hypotenuse = np.array(unitary(rotate_vector(rotated_direction_vector, math.pi / 2))) * (\r\n                (distance_lambda / 2) / math.sin(token.a / 2))\r\n\r\n    center_offset = opposite + hypotenuse\r\n\r\n    center = latlon_plus_meters(token.position, center_offset)\r\n\r\n    return center\r\n\r\n\r\ndef magnitude(vector):\r\n    return np.linalg.norm(vector)\r\n\r\n\r\ndef interpolate_crossing(threshold, d1, d2):\r\n    position1 = d1.position\r\n    position2 = d2.position\r\n    min_value = min(d1.value, d2.value)\r\n    max_value = max(d1.value, d2.value)\r\n\r\n    if min_value == max_value:\r\n        # Avoid division by zero if start_value equals end_value\r\n        threshold_fraction = 0.5\r\n    else:\r\n        threshold_fraction = (threshold - min_value) / (max_value - min_value)\r\n\r\n    interpolated_lat = position1.latitude + (position2.latitude - position1.latitude) * threshold_fraction\r\n    interpolated_lon = position1.longitude + (position2.longitude - position1.longitude) * threshold_fraction\r\n\r\n    return LatLon(interpolated_lat, interpolated_lon)\r\n\r\n\r\nclass Sketch:\r\n    INITIAL_ORIENTATION = True\r\n\r\n    def __init__(self, distance_sqrt_lambda, lambda_value, threshold, starting_direction=None, latest_gradient=None):\r\n        self.drone1 = Drone(threshold, latest_gradient, distance_sqrt_lambda)\r\n        self.drone2 = Drone(threshold, latest_gradient, distance_sqrt_lambda)\r\n\r\n        self.distance_sqrt_lambda = distance_sqrt_lambda\r\n        self.distance_lambda = self.distance_sqrt_lambda * lambda_value / (math.sqrt(lambda_value))\r\n        self.lambda_value = lambda_value\r\n        self.threshold = threshold\r\n        self.starting_direction = starting_direction\r\n\r\n        self.encountered = False\r\n        self.starting_location = None\r\n        self.position_reading_queue = []\r\n        self.latest_crossing_point = None\r\n        self.latest_point_before_crossing = None\r\n        self.latest_gradient = latest_gradient\r\n\r\n        self.flip = False\r\n\r\n    def update(self, d1, d2):\r\n\r\n        update_result = self.drone2.update(d2, self.drone1)\r\n        if update_result is not None:\r\n            [self.latest_crossing_point, self.latest_point_before_crossing, self.latest_gradient] = update_result\r\n        update_result = self.drone1.update(d1, self.drone2)\r\n        if update_result is not None:\r\n            [self.latest_crossing_point, self.latest_point_before_crossing, self.latest_gradient] = update_result\r\n\r\n        if not self.encountered and (self.inside(self.drone1) or self.inside(self.drone1)):\r\n            self.encountered = True\r\n            self.starting_location = average(self.drone1.position, self.drone2.position)\r\n\r\n        self.position_reading_queue.append(d1)\r\n        self.position_reading_queue.append(d2)\r\n\r\n        while len(self.position_reading_queue) > 200:\r\n            self.position_reading_queue.pop(0)\r\n\r\n    # Algorithm 3 Initially, robots are √λ apart; one inside and one outside\r\n    def boundary_sketch(self):\r\n\r\n        while self.drone1.position is None or self.drone2.position is None:\r\n            yield None\r\n\r\n        self.target_position_vector = self.initial_direction(self.drone1, self.drone2)\r\n        yield from self.until(self.target_position_vector, lambda: self.encountered)\r\n\r\n        while self.incomplete():\r\n            # D1, D2 ← the two robots\r\n            # ∇ ← boundary gradient at point of crossing with line segment between D1 and D2\r\n            # α ← √λ\r\n            lambda_value = self.lambda_value\r\n            if self.inside(self.drone1) ^ self.inside(self.drone2):\r\n                # D1 and D2 both move λ distance in the direction of ∇\r\n                # print(\"Sandwich\")\r\n                self.target_position_vector = self.forward(self.drone1, self.drone2)\r\n\r\n                # print(f\"Sandwich: {self.target_position_vector} {self.d1} {self.d2}\")\r\n                yield from self.until(self.target_position_vector,\r\n                                      lambda: self.moved_forward_lambda(self.target_position_vector, self.drone1,\r\n                                                                        self.drone2))\r\n\r\n            if not self.inside(self.drone1) and not self.inside(self.drone2):\r\n                # print(\"Outside\")\r\n                a = math.sqrt(lambda_value)\r\n                # print(f\"Outside: {a}\")\r\n                yield from self.cross_boundary(self.drone1, self.drone2, a)\r\n            elif self.inside(self.drone1) and self.inside(self.drone2):\r\n                # print(\"Inside\")\r\n                a = -math.sqrt(lambda_value)\r\n                # print(f\"Inside: {a}\")\r\n                yield from self.cross_boundary(self.drone2, self.drone1, a)\r\n\r\n    # Algorithm 2 Reestablishes “Sandwich” Invariant\r\n    def cross_boundary(self, drone1: Drone, drone2: Drone, a):\r\n        if self.flip:\r\n            drone1, drone2 = drone2, drone1\r\n        was_inside = self.inside(drone1)\r\n\r\n        # print(f\"turning: {self.inside(self.d1)} {self.inside(self.d2)} was inside: {was_inside}\")\r\n\r\n        #   p ← last position of D1 before crossing\r\n        #   R ← the vertices of the regular polygon including D1’s position with exterior angle √λ and\r\n        #       the edge beginning at D1’s position facing the direction of ∇ + α.\r\n        #   P ← the vertices of the convex hull of R ∪ {p}. For all i : 0 ≤ i ≤ |P| − 1, let\r\n        #       Pi be the i-th vertex in this convex hull, ordered such that P0 = p and P1 = D1’s current position.\r\n        #   ∇ ← gradient at the last boundary crossing of D1\r\n        #   i ← 1.\r\n\r\n        def angle_to(pv, p, t):\r\n            return calculate_angle([pv.x, pv.y], difference_in_meters(p, t))\r\n\r\n        def polygon_facing_crossing():\r\n            if self.latest_point_before_crossing is not None:\r\n                angle = angle_to(self.target_position_vector, self.latest_point_before_crossing, drone1.position)\r\n                #                 print(f\"cone: {angle} < {a}\")\r\n                return angle < math.fabs(a)\r\n            return False\r\n\r\n        i = 1\r\n        #   while neither robot has crossed the boundary AND i + 1 < |P| do\r\n        while (self.inside(drone1) == was_inside and self.inside(drone2) == was_inside and\r\n               i < math.fabs(2 * math.pi / a) and\r\n               not polygon_facing_crossing()):\r\n            #   D1 moves to Pi+1.\r\n            #   D2 moves to closest point from it that is √λ distance away from Pi and orthogonal to ∇ + iα\r\n            self.target_position_vector = self.turn(drone1, drone2, a)\r\n            yield from self.until(self.target_position_vector,\r\n                                  lambda: self.turned_lambda(self.target_position_vector, self.distance_lambda, i,\r\n                                                             drone1, drone2))\r\n            #   i ← i + 1\r\n            i = i + 1\r\n\r\n        # print(\"crossed boundary\", i < math.fabs(2*math.pi / a), i, math.fabs(2*math.pi / a), a)\r\n\r\n        # print(f\"angle_to: {angle_to(self.target_position_vector, self.d1_before_crossing, self.d1)} {i * a} {polygon_facing_crossing()}\")\r\n\r\n        #   while neither robot has crossed the boundary do\r\n        while self.inside(drone1) == was_inside and self.inside(drone2) == was_inside:\r\n            print(\"back to point\")\r\n            #       D1 moves towards point p taking steps of length λ.\r\n            #       D2 moves to closest point from it that is √λ distance away from D1 and orthogonal to D1’s direction.\r\n            #   if self.latest_point_before_crossing is not None:\r\n            direction_back = unitary(difference_in_meters(self.latest_point_before_crossing, drone1.position))\r\n            self.target_position_vector = self.forward_by_vector(self.drone1, self.drone2, direction_back)\r\n            yield from self.until(self.target_position_vector, lambda: self.moved_forward_lambda(self.target_position_vector, self.drone1, self.drone2))\r\n        #   if D2 crossed the boundary then\r\n        if self.inside(drone2) != was_inside:\r\n            # SYNCHRONIZE (D1, D2)\r\n            yield from self.synchronize(drone1, drone2, a > 0 if was_inside else a < 0)\r\n        #   else\r\n        #   ∇ ← the current direction of D1.\r\n\r\n    def synchronized(self, position_vector, drone1: Drone, drone2: Drone):\r\n\r\n        distance_to_center = magnitude(\r\n            difference_in_meters(average(drone1.position, drone2.position), position_vector.position))\r\n        angle_to_direction = math.fabs(calculate_angle([position_vector.x, position_vector.y],\r\n                                                       difference_in_meters(drone1.position, drone2.position))) + (\r\n                                         math.pi / 2)\r\n\r\n        while angle_to_direction > math.pi / 2:\r\n            angle_to_direction -= math.pi\r\n\r\n        return distance_to_center < 1 and angle_to_direction < 0.2\r\n\r\n    # Algorithm 1 Ensures the robots are at distance √λ from each other and are oriented in the same direction.\r\n    def synchronize(self, drone1: Drone, drone2: Drone, left):\r\n        #         print(\"synchronize\")\r\n        #   Path ← the polyline path of D2 from last crossing of BOUNDARY-SKETCH with the shape till current position.\r\n        #   ∇ ← the gradient at the last boundary crossing for D2.\r\n        #   L1 ← the line in the direction of ∇ through D1’s position.\r\n        #   L2 ← the line in the direction of ∇ through D2’s position.\r\n\r\n        eta = rotate_vector(drone2.gradient, math.pi / 2 if left else -math.pi / 2)\r\n        position_vector = PositionVector()\r\n        position_vector.movement = SYNCHRONIZE\r\n        [position_vector.x, position_vector.y] = eta\r\n\r\n        #   if L1 crosses Path then\r\n        if np.dot(self.drone2.gradient, difference_in_meters(drone2.position, drone1.position)) > 0:\r\n            # Move D2 in its current direction until it is √λ distance away from L1.\r\n            # Change direction to ∇ and take a single step of length λ.\r\n            # Move D1 along L1 until it is √λ away from D2.\r\n            position_vector.position = latlon_plus_meters(drone1.position,\r\n                                                          unitary(drone2.gradient) * self.distance_sqrt_lambda / 2)\r\n\r\n        #   else\r\n        else:\r\n            # Move D1 in its current direction until it is √ λ distance away from L2.\r\n            self.flip = not self.flip\r\n            position_vector.position = latlon_plus_meters(drone2.position,\r\n                                                          unitary(drone2.gradient) * self.distance_sqrt_lambda / 2)\r\n\r\n        position_vector.distance = self.distance_lambda\r\n        self.target_position_vector = position_vector\r\n        yield from self.until(self.target_position_vector,\r\n                              lambda: self.synchronized(self.target_position_vector, drone1, drone2))\r\n        #   Change direction to ∇ and move until the distance from D2 is √λ.\r\n\r\n    def forward(self, drone1: Drone, drone2: Drone):\r\n        if self.target_position_vector.movement == TURN:\r\n            prev_vector = [self.target_position_vector.x, self.target_position_vector.y]\r\n            angle = self.target_position_vector.a * self.target_position_vector.p\r\n            return self.forward_by_vector(drone1, drone2, rotate_vector(prev_vector, angle))\r\n        else:\r\n            return self.forward_by_vector(drone1, drone2,\r\n                                          [self.target_position_vector.x, self.target_position_vector.y])\r\n\r\n    def forward_by_vector(self, drone1: Drone, drone2: Drone, direction_vector):\r\n        self.clear_crossing()\r\n        gradient = self.calculate_gradient()\r\n        drone1.update_before_crossing()\r\n        drone2.update_before_crossing()\r\n\r\n        # D1 and D2 both move λ distance in the direction of ∇\r\n        position_vector = PositionVector()\r\n        position_vector.movement = FORWARD\r\n        [position_vector.x, position_vector.y] = direction_vector\r\n\r\n        position_vector.position = average(drone1.position, drone2.position)\r\n        position_vector.gradient = gradient\r\n\r\n        position_vector.distance = self.distance_lambda\r\n\r\n        return position_vector\r\n\r\n    def turn(self, drone1: Drone, drone2: Drone, a):\r\n        if a == self.target_position_vector.a:\r\n            self.target_position_vector.p += 1\r\n            # print(f\"p : {self.target_position_vector.p}\")\r\n            if self.latest_point_before_crossing is not None:\r\n                self.target_position_vector.vector_to_crossing = unitary(\r\n                    difference_in_meters(self.latest_point_before_crossing, drone1.position))\r\n                self.target_position_vector.updated_position = drone1.position\r\n            return self.target_position_vector\r\n\r\n        gradient = self.calculate_gradient()\r\n\r\n        position_vector = PositionVector()\r\n        position_vector.movement = TURN\r\n        [position_vector.x, position_vector.y] = self.calculate_closest_gradient_tangent(\r\n            [self.target_position_vector.x, self.target_position_vector.y], gradient)\r\n        position_vector.position = average(drone1.position, drone2.position)\r\n        # position_vector.position = self.calculate_position()\r\n        # direction = [self.target_position_vector.x, self.target_position_vector.y]\r\n        # print(f\"turn: {direction, [position_vector.x, position_vector.y]}\")\r\n        position_vector.a = a\r\n        position_vector.p = 1\r\n        position_vector.gradient = gradient\r\n        position_vector.prev_pt = self.latest_point_before_crossing\r\n\r\n        if self.latest_point_before_crossing is not None:\r\n            position_vector.vector_to_crossing = unitary(\r\n                difference_in_meters(self.latest_point_before_crossing, drone1.position))\r\n            position_vector.updated_position = drone1.position\r\n\r\n        return position_vector\r\n\r\n    def incomplete(self):\r\n        return True\r\n\r\n    def inside(self, d: Drone):\r\n        return d.position.value > self.threshold\r\n\r\n    def calculate_gradient(self):\r\n        return self.latest_gradient\r\n\r\n    def clear_crossing(self):\r\n        self.drone1.clear_crossing()\r\n        self.drone2.clear_crossing()\r\n        self.latest_crossing_point = None\r\n\r\n    @staticmethod\r\n    def line_cross(d1):\r\n        return False\r\n\r\n    def initial_direction(self, drone1: Drone, drone2: Drone):\r\n        average_position = average(drone1.position, drone2.position)\r\n\r\n        position_vector = PositionVector()\r\n        position_vector.movement = FORWARD\r\n        if self.starting_direction is None:\r\n            position_vector.x = 0.0\r\n            position_vector.y = 1.0\r\n        else:\r\n            position_vector.x = self.starting_direction[0]\r\n            position_vector.y = self.starting_direction[1]\r\n        position_vector.position = LatLon(average_position.latitude, average_position.longitude)\r\n        position_vector.distance = 5.0\r\n\r\n        return position_vector\r\n\r\n    @staticmethod\r\n    def until(position_vector, callback):\r\n        while not callback():\r\n            yield position_vector\r\n\r\n    @staticmethod\r\n    def moved_forward_lambda(target_position_vector, drone1: Drone, drone2: Drone):\r\n        target_offset = difference_in_meters(average(drone1.position, drone2.position), target_position_vector.position)\r\n        distance = np.dot(target_offset, [target_position_vector.x, target_position_vector.y])\r\n\r\n        return distance > target_position_vector.distance\r\n\r\n    @staticmethod\r\n    def turned_lambda(target_position_vector, distance_lambda, p, drone1: Drone, drone2: Drone):\r\n        center = calculate_turn_center(target_position_vector, distance_lambda)\r\n        target_offset = rotate_vector(difference_in_meters(target_position_vector.position, center),\r\n                                      (target_position_vector.a * p))\r\n        hyp = difference_in_meters(average(drone1.position, drone2.position), center)\r\n\r\n        target_angle = math.fabs(target_position_vector.a)\r\n\r\n        intermediate = ((target_offset[0] * hyp[0]) + (target_offset[1] * hyp[1])) / (magnitude(target_offset) * magnitude(hyp))\r\n        if intermediate > 1 or intermediate < -1:\r\n            intermediate = 1\r\n        angle = math.acos(intermediate)\r\n\r\n        # print(f\"Turn passed: {angle} > {target_angle} = {angle > target_angle}\")\r\n        return angle < target_angle\r\n\r\n    def calculate_closest_gradient_tangent(self, direction, gradient):\r\n        orient = self.inside(self.drone1) ^ self.inside(self.drone2)\r\n        if orient == self.INITIAL_ORIENTATION:\r\n            orient = self.inside(self.drone2)\r\n\r\n        sign = np.cross(np.array(direction), np.array(gradient)) > 0\r\n\r\n        if sign == orient:\r\n            return rotate_vector(gradient, math.pi / 2)\r\n        else:\r\n            return rotate_vector(gradient, -math.pi / 2)\r\n\r\n\r\nclass SketchAction:\r\n\r\n    def __init__(self, id, local_setvelocity_publisher, announce_stream, distance_sqrt_lambda, lambda_value, partner,\r\n                 leader, threshold,\r\n                 drone_stream_factory, dragonfly_sketch_subject, position_vector_publisher, starting_direction=None,\r\n                 latest_gradient=None):\r\n\r\n        self.local_setvelocity_publisher = local_setvelocity_publisher\r\n        self.id = id\r\n        self.partner = partner\r\n        self.distance_sqrt_lambda = distance_sqrt_lambda\r\n        self.lambda_value = lambda_value\r\n        self.distance_lambda = self.distance_sqrt_lambda * lambda_value / math.sqrt(lambda_value)\r\n        # print(f\"distance_lambda:  {self.distance_sqrt_lambda} * {lambda_value} / {math.sqrt(lambda_value)} = { self.distance_sqrt_lambda * lambda_value / math.sqrt(lambda_value)}\")\r\n        # print(f\"distance_lambda: {self.distance_lambda}\")\r\n        self.leader = leader\r\n        self.started = False\r\n        self.threshold = threshold\r\n        self.ros_subscriptions = []\r\n        self.announce_stream = announce_stream\r\n        self.drone_stream_factory = drone_stream_factory\r\n        self.dragonfly_sketch_subject = dragonfly_sketch_subject\r\n        self.position_vector_publisher = position_vector_publisher\r\n\r\n        self.navigate_subscription = rx.empty().subscribe()\r\n        self.leader_broadcast_subscription = rx.empty().subscribe()\r\n        self.target_position_vector = None\r\n        self.sketch = Sketch(distance_sqrt_lambda, lambda_value, threshold, starting_direction, latest_gradient)\r\n        self.sketch_generator = self.sketch.boundary_sketch()\r\n\r\n    def navigate(self, input):\r\n\r\n        twist = [0, 0]\r\n\r\n        for vector in input:\r\n            twist[0] += vector[0]\r\n            twist[1] += vector[1]\r\n\r\n        self.local_setvelocity_publisher.on_next(twist)\r\n\r\n    @staticmethod\r\n    def format_velocities(twist):\r\n        return [\r\n            twist.twist.linear.x,\r\n            twist.twist.linear.y\r\n        ]\r\n\r\n    def step(self):\r\n        if not self.started:\r\n            self.started = True\r\n\r\n            partner_drone = self.drone_stream_factory.get_drone(self.partner)\r\n            self_drone = self.drone_stream_factory.get_drone(self.id)\r\n\r\n            self.navigate([[0,0]])\r\n\r\n            self.navigate_subscription = rx.combine_latest(\r\n                partner_drone.get_position(),\r\n                self_drone.get_position(),\r\n                self.dragonfly_sketch_subject\r\n            ).pipe(\r\n                ops.map(lambda positions: self.tandem(positions[0][0], positions[1][0], positions[2]))\r\n            ).subscribe(lambda vectors: self.navigate(vectors))\r\n\r\n            if self.leader:\r\n                self.leader_broadcast_subscription = rx.combine_latest(\r\n                    self.setup_subject(self.partner),\r\n                    self.setup_subject(self.id)\r\n                ).subscribe(lambda position_reading_vector: self.broadcast_command(position_reading_vector[0],\r\n                                                                                   position_reading_vector[1]))\r\n\r\n    def setup_subject(self, drone):\r\n\r\n        drone_streams = self.drone_stream_factory.get_drone(drone)\r\n\r\n        position_subject = drone_streams.get_position()\r\n        velocity_subject = drone_streams.get_velocity()\r\n        co2_subject = drone_streams.get_co2()\r\n\r\n        position_value_subject = Subject()\r\n\r\n        def create_reading_position(co2_timestamp, position_timestamp, velocity_timestamp):\r\n            position = position_timestamp[0]\r\n            velocity = velocity_timestamp[0]\r\n            co2 = co2_timestamp[0]\r\n            time_delta = co2_timestamp[1] - position_timestamp[1]\r\n            # print(time_delta.total_seconds())\r\n            updated_position = latlon_plus_meters(position, (time_delta.total_seconds() * np.array(velocity)))\r\n            return ReadingPosition(updated_position.latitude, updated_position.longitude, co2.ppm)\r\n\r\n        return co2_subject.pipe(\r\n            ops.with_latest_from(position_subject, velocity_subject),\r\n            ops.map(lambda tuple: create_reading_position(tuple[0], tuple[1], tuple[2]))\r\n        )\r\n\r\n        # return position_value_subject\r\n\r\n    def broadcast_command(self, partner_position, self_position):\r\n\r\n        self.sketch.update(self_position, partner_position)\r\n\r\n        self.target_position_vector = next(self.sketch_generator)\r\n\r\n        if self.target_position_vector is not None:\r\n            self.position_vector_publisher.on_next(self.target_position_vector)\r\n            self.dragonfly_sketch_subject.on_next(self.target_position_vector)\r\n\r\n    def tandem(self, partner_position, self_position, positionVector):\r\n\r\n        tandem_offset = self.calculate_tandem_offset(partner_position, self_position)\r\n        tandem_angle = self.calculate_tandem_angle(partner_position, self_position, positionVector)\r\n        straight_line = self.calculate_straight_line(positionVector)\r\n        turning = self.calculate_turn(partner_position, self_position, positionVector)\r\n        offset_error_correction = self.calculate_error_correction(partner_position, self_position, positionVector)\r\n\r\n        gain_offset = 0.01\r\n        gain_tandem = 1.0\r\n        gain_turning = 0.01\r\n        gain_angle_tandem = 0.01\r\n\r\n        \r\n\r\n        # return [gain_tandem*tandem_offset, gain_angle_tandem*tandem_angle, straight_line, gain_turning*turning, gain_offset*offset_error_correction]\r\n\r\n        flight_vectors = [tandem_offset, tandem_angle, straight_line, offset_error_correction, turning]\r\n        print([f'{magnitude(v):.2f}' for v in flight_vectors])\r\n        return flight_vectors\r\n\r\n    def calculate_tandem_offset(self, partner_position, self_position):\r\n        distance_m = difference_in_meters(partner_position, self_position)\r\n        offset_unitary = unitary(distance_m)\r\n\r\n        position_offset = np.array(distance_m) - (np.array(offset_unitary) * self.distance_sqrt_lambda)\r\n        offset_magnitude = magnitude(position_offset)\r\n\r\n        #tandem_distance = position_offset * (2 / max(0.015, offset_magnitude))\r\n        tandem_distance = position_offset * (0.5 / max(0.1, offset_magnitude))\r\n        return tandem_distance\r\n\r\n    @staticmethod\r\n    def calculate_tandem_angle(partner_position, self_position, position_vector):\r\n        # print(\"self_position: \", self_position)\r\n        if position_vector.movement == FORWARD or position_vector.movement == SYNCHRONIZE:\r\n            distance_m = difference_in_meters(self_position, partner_position)\r\n            offset_unitary = unitary(distance_m)\r\n\r\n            direction_vector = np.array([position_vector.x, position_vector.y])\r\n\r\n\r\n            return -2 * (np.dot(offset_unitary, direction_vector)) * direction_vector\r\n        elif position_vector.movement == TURN:\r\n            prev_vector = [position_vector.x, position_vector.y]\r\n            angle = position_vector.a * position_vector.p\r\n            direction = rotate_vector(prev_vector, angle)\r\n\r\n            offset_unitary = unitary(difference_in_meters(self_position, partner_position))\r\n\r\n            return -2 * np.dot(offset_unitary, direction) * direction\r\n        else:\r\n            return [0, 0]\r\n\r\n    @staticmethod\r\n    def calculate_straight_line(position_vector):\r\n        if position_vector.movement == FORWARD:\r\n            return [position_vector.x, position_vector.y]\r\n        else:\r\n            return [0, 0]\r\n\r\n    def calculate_turn(self, partner_position, self_position, position_vector):\r\n        if position_vector.movement == TURN:\r\n\r\n            center = calculate_turn_center(position_vector, self.distance_lambda)\r\n\r\n            self_center = difference_in_meters(center, self_position)\r\n            self_center_distance = magnitude(self_center)\r\n            partner_center_distance = magnitude(difference_in_meters(center, partner_position))\r\n\r\n            base_velocity = 1\r\n\r\n            if self_center_distance > partner_center_distance:\r\n                velocity = base_velocity\r\n            else:\r\n                velocity = (self_center_distance / partner_center_distance) * base_velocity\r\n\r\n            vector_to_center = unitary(self_center)\r\n\r\n            starting_position = difference_in_meters(center, position_vector.position)\r\n            angle = math.atan2(self_center[1], self_center[0]) - math.atan2(starting_position[1], starting_position[0])\r\n\r\n            rotated_vector = rotate_vector([position_vector.x, position_vector.y], angle)\r\n\r\n            forward_force = np.array(rotated_vector) * velocity\r\n            # if self_center_distance > 0:\r\n            #     centripetal_force_magnitude = (velocity ** 2) / self_center_distance\r\n            #     centripetal_force = np.array(vector_to_center) * centripetal_force_magnitude\r\n            # else:\r\n            #     centripetal_force = np.array([0, 0])\r\n            centripetal_force = np.array(vector_to_center) * 0.2 * velocity / self_center_distance\r\n\r\n            return forward_force + centripetal_force\r\n        else:\r\n            return [0, 0]\r\n\r\n    def calculate_error_correction(self, partner_position, self_position, position_vector):\r\n        if position_vector.movement == FORWARD:\r\n            vector_to_target = difference_in_meters(average(self_position, partner_position), position_vector.position)\r\n\r\n            dot_product = np.dot([position_vector.x, position_vector.y], vector_to_target)\r\n\r\n            \r\n\r\n            vector_to_line = (dot_product * np.array([position_vector.x, position_vector.y]) - vector_to_target)\r\n\r\n            magnitude_calc = magnitude(vector_to_line)\r\n\r\n            max_magnitude = 1.0\r\n\r\n            if magnitude_calc > max_magnitude:\r\n                return vector_to_line / (magnitude_calc / max_magnitude)\r\n            else:\r\n                return vector_to_line\r\n        elif position_vector.movement == TURN:\r\n            # Maintain distance-to-center\r\n            center = calculate_turn_center(position_vector, self.distance_lambda)\r\n            expected_distance_to_center = magnitude(difference_in_meters(position_vector.position, center))\r\n\r\n            average_to_center = difference_in_meters(average(self_position, partner_position), center)\r\n\r\n            center_correction = unitary(average_to_center) * np.array(\r\n                expected_distance_to_center - magnitude(average_to_center))\r\n\r\n            return center_correction\r\n        elif position_vector.movement == SYNCHRONIZE:\r\n            vector_to_target = difference_in_meters(position_vector.position, average(self_position, partner_position))\r\n            \r\n            magnitude_calc = magnitude(vector_to_target)\r\n\r\n            max_magnitude = 1\r\n\r\n            if magnitude_calc > max_magnitude:\r\n                return vector_to_target / (magnitude_calc / max_magnitude)\r\n            else:\r\n                return vector_to_target\r\n        else:\r\n            return [0, 0]\r\n\r\n    def stop(self):\r\n        self.navigate_subscription.dispose()\r\n        self.leader_broadcast_subscription.dispose()\r\n\r\n\r\ndef plume_contour(threshold, plumes, lon=[-106.598, -106.595], lat=[35.195, 35.1976], scale=100.0):\r\n    lonRes = ((lon[1] - lon[0]) / scale)\r\n    latRes = ((lat[1] - lat[0]) / scale)\r\n    x, y = np.ogrid[lon[0]:lon[1]:lonRes, lat[0]:lat[1]:latRes]\r\n\r\n    calculate_co2_xy_vect = np.vectorize(lambda y, x: calculate_co2_xy(y, x, plumes))\r\n\r\n    r = calculate_co2_xy_vect(y, x)\r\n\r\n    return measure.find_contours(r, threshold)\r\n\r\n\r\ndef plot_plumes(plt, threshold, plumes, lon=[-106.598, -106.595], lat=[35.195, 35.1976], scale=100.0, rep=1):\r\n    ax = plt.gca()\r\n\r\n    lonRes = ((lon[1] - lon[0]) / scale)\r\n    latRes = ((lat[1] - lat[0]) / scale)\r\n\r\n    contour = plume_contour(threshold, plumes, lon=lon, lat=lat, scale=scale)\r\n    lon0=contour[0][:, 0] * lonRes + lon[0]\r\n    lat0=contour[0][:, 1] * latRes + lat[0]\r\n\r\n    # Base directory where all files will be saved\r\n    base_directory = \"/home/marhes_1/VolCAN/Data_simulation_double_plume\"\r\n\r\n    # Get the current time and format it as a string suitable for directory naming\r\n    experiment_timestamp = datetime.now().strftime(\"%Y-%m-%d_%H-%M-%S\")\r\n\r\n    # Define the directory path for this specific experiment\r\n    experiment_directory = os.path.join(base_directory, f\"SIM{rep-1}experiment_{experiment_timestamp}\")\r\n\r\n    # Ensure the experiment directory exists\r\n    os.makedirs(experiment_directory, exist_ok=True)\r\n\r\n    filename = os.path.join(experiment_directory, f\"lon0_plume.csv\")\r\n\r\n    df = pd.DataFrame(lon0)\r\n    df.to_csv(filename, index=False)\r\n\r\n    filename = os.path.join(experiment_directory, f\"lat0_plume.csv\")\r\n\r\n    df = pd.DataFrame(lat0)\r\n    df.to_csv(filename, index=False)\r\n\r\n    if len(contour) > 0:\r\n        ax.plot(contour[0][:, 0] * lonRes + lon[0], contour[0][:, 1] * latRes + lat[0], linewidth=3, color=\"lightgreen\",\r\n                zorder=-1, label=\"Plume boundary\")\r\n\r\n    return experiment_directory\r\n\r\n\r\n\r\n\r\ndef main():\r\n    plumes = [\r\n        Plume(LatLon(35.1973, -106.5972), -30, 80000, 0.2)\r\n    ]\r\n\r\n    threshold = 450\r\n\r\n    df1p = LatLon(35.1953, -106.5959)\r\n    df2p = LatLon(35.1953, -106.5958)\r\n\r\n    streamFactory = DroneStreamFactory()\r\n    announceStream = Subject()\r\n    df1SetVelocity = BehaviorSubject([0, 1])\r\n    df2SetVelocity = BehaviorSubject([0, 1])\r\n    sketchSubject = Subject()\r\n    vector1Publisher = Subject()\r\n    vector2Publisher = Subject()\r\n    df1Position = Subject()\r\n    df2Position = Subject()\r\n    df1co2 = Subject()\r\n    df2co2 = Subject()\r\n    streamFactory.put_drone(\"DF1\", df1Position, df1co2)\r\n    streamFactory.put_drone(\"DF2\", df2Position, df2co2)\r\n\r\n    action1 = SketchAction(\"DF1\", df1SetVelocity, announceStream, 10, \"DF2\", True, threshold, streamFactory,\r\n                           sketchSubject, vector1Publisher)\r\n    action2 = SketchAction(\"DF2\", df2SetVelocity, announceStream, 10, \"DF1\", False, threshold, streamFactory,\r\n                           sketchSubject, vector2Publisher)\r\n\r\n    action1.step()\r\n    action2.step()\r\n\r\n    def addOffset(position, offset):\r\n        longitude = position.longitude + (\r\n                    (offset[0] / 2) / (math.cos(position.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))\r\n        latitude = position.latitude + ((offset[1] / 2) / (EARTH_CIRCUMFERENCE / 360))\r\n        return LatLon(latitude, longitude)\r\n\r\n    df1latitudes = []\r\n    df2latitudes = []\r\n    df1longitudes = []\r\n    df2longitudes = []\r\n    df1p = LatLon(35.197275, -106.5971778)\r\n\r\n    def add_algorithm_details(token):\r\n        if token.movement == FORWARD:\r\n            plt.arrow(token.position.longitude, token.position.latitude, token.x * 0.00005, token.y * 0.00005,\r\n                      head_width=0.00002, head_length=0.00002, width=0.000002, fc='k', ec='k')\r\n        if token.movement == TURN:\r\n            center = calculate_turn_center(token, 3.34)\r\n            plt.scatter(center.longitude, center.latitude, color='b', marker='x')\r\n            plt.arrow(token.position.longitude, token.position.latitude, token.x * 0.00005, token.y * 0.00005,\r\n                      head_width=0.00002, head_length=0.00002, width=0.000002, fc='b', ec='b')\r\n\r\n        if hasattr(token, 'gradient'):\r\n            plt.arrow(token.position.longitude, token.position.latitude, token.gradient[0] * 0.00005,\r\n                      token.gradient[1] * 0.00005, head_width=0.00002, head_length=0.00002, width=0.000002, fc='r',\r\n                      ec='r')\r\n\r\n    sketchSubject.subscribe(on_next=lambda value: add_algorithm_details(value))\r\n\r\n    plt.figure(figsize=(10, 8))\r\n    plt.ticklabel_format(style='plain', useOffset=False)\r\n\r\n    plot_plumes(plt, threshold, plumes)\r\n\r\n    rtl_boundary = [[-106.59560571790382, 35.194970536767734],\r\n                    [-106.59468168252396, 35.19708285919182],\r\n                    [-106.59740227218711, 35.197794979053691537],\r\n                    [-106.59836367437691, 35.19570830789695],\r\n                    [-106.59560571790382, 35.194970536767734]]\r\n    xs, ys = zip(*rtl_boundary)\r\n    plt.plot(xs, ys)\r\n\r\n    for plume in plumes:\r\n        plt.plot(plume.source.longitude, plume.source.latitude, marker='*', c='r', markeredgewidth=1,\r\n                 markeredgecolor=(0, 0, 0, 1), markersize=12)\r\n\r\n    for i in range(450):\r\n        # print(i)\r\n        df1co2v = calculate_co2(df1p, plumes)\r\n        df2co2v = calculate_co2(df2p, plumes)\r\n        df1Velocity.on_next(df1v)\r\n        df1Position.on_next(df1p)\r\n        df1co2.on_next(CO2(df1co2v))\r\n        df2Position.on_next(df2p)\r\n        df2co2.on_next(CO2(df2co2v))\r\n\r\n        df1velocity = df1SetVelocity.pipe(ops.first()).run()\r\n        df2velocity = df2SetVelocity.pipe(ops.first()).run()\r\n\r\n        df1p = addOffset(df1p, df1velocity)\r\n        df2p = addOffset(df2p, df2velocity)\r\n\r\n        # print(f\"df1 co2: {df1co2v}\")\r\n        # print(f\"df2 co2: {df2co2v}\")\r\n        # print(f\"df1 v: {df1velocity}\")\r\n        # print(f\"df2 v: {df2velocity}\")\r\n        #\r\n        # print(f\"df1 p: {df1p.latitude}, {df1p.longitude}\")\r\n        # print(f\"df2 p: {df2p.latitude}, {df2p.longitude}\")\r\n        #\r\n        # print()\r\n\r\n        df1latitudes.append(df1p.latitude)\r\n        df1longitudes.append(df1p.longitude)\r\n        df2latitudes.append(df2p.latitude)\r\n        df2longitudes.append(df2p.longitude)\r\n\r\n    plt.scatter(df1longitudes, df1latitudes, s=4)\r\n    plt.scatter(df2longitudes, df2latitudes, s=4)\r\n    plt.axis('equal')\r\n    plt.savefig('sketch.png', format=\"png\", dpi=300)\r\n\r\n\r\nif __name__ == \"__main__\":\r\n    main()\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/sketch.py b/sketch.py
+--- a/sketch.py	(revision 0e26fbe4de53cf630409f2e9aed4ad6565bff5d3)
++++ b/sketch.py	(date 1744073223467)
+@@ -747,7 +747,7 @@
+         offset_magnitude = magnitude(position_offset)
+ 
+         #tandem_distance = position_offset * (2 / max(0.015, offset_magnitude))
+-        tandem_distance = position_offset * (0.5 / max(0.1, offset_magnitude))
++        tandem_distance = position_offset * (0.9/ max(0.1, offset_magnitude))
+         return tandem_distance
+ 
+     @staticmethod
+@@ -768,7 +768,7 @@
+ 
+             offset_unitary = unitary(difference_in_meters(self_position, partner_position))
+ 
+-            return -2 * np.dot(offset_unitary, direction) * direction
++            return -0.4* np.dot(offset_unitary, direction) * direction
+         else:
+             return [0, 0]
+ 
+@@ -788,7 +788,7 @@
+             self_center_distance = magnitude(self_center)
+             partner_center_distance = magnitude(difference_in_meters(center, partner_position))
+ 
+-            base_velocity = 1
++            base_velocity = 1.0
+ 
+             if self_center_distance > partner_center_distance:
+                 velocity = base_velocity
+@@ -880,12 +880,8 @@
+     lonRes = ((lon[1] - lon[0]) / scale)
+     latRes = ((lat[1] - lat[0]) / scale)
+ 
+-    contour = plume_contour(threshold, plumes, lon=lon, lat=lat, scale=scale)
+-    lon0=contour[0][:, 0] * lonRes + lon[0]
+-    lat0=contour[0][:, 1] * latRes + lat[0]
+-
+     # Base directory where all files will be saved
+-    base_directory = "/home/marhes_1/VolCAN/Data_simulation_double_plume"
++    base_directory = "/home/marhes_1/VolCAN/Data_simulation_single_plume"
+ 
+     # Get the current time and format it as a string suitable for directory naming
+     experiment_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+@@ -897,16 +893,20 @@
+     os.makedirs(experiment_directory, exist_ok=True)
+ 
+     filename = os.path.join(experiment_directory, f"lon0_plume.csv")
++    contour = plume_contour(threshold, plumes, lon=lon, lat=lat, scale=scale)
++
++    if (len(contour) > 0):
++        lon0 = contour[0][:, 0] * lonRes + lon[0]
++        lat0 = contour[0][:, 1] * latRes + lat[0]
+ 
+-    df = pd.DataFrame(lon0)
+-    df.to_csv(filename, index=False)
++        df = pd.DataFrame(lon0)
++        df.to_csv(filename, index=False)
+ 
+-    filename = os.path.join(experiment_directory, f"lat0_plume.csv")
++        filename = os.path.join(experiment_directory, f"lat0_plume.csv")
+ 
+-    df = pd.DataFrame(lat0)
+-    df.to_csv(filename, index=False)
++        df = pd.DataFrame(lat0)
++        df.to_csv(filename, index=False)
+ 
+-    if len(contour) > 0:
+         ax.plot(contour[0][:, 0] * lonRes + lon[0], contour[0][:, 1] * latRes + lat[0], linewidth=3, color="lightgreen",
+                 zorder=-1, label="Plume boundary")
+ 
+Index: main_sketch_codeV4.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import rx\r\nimport math\r\nfrom crazyflie_examples.sketch import DroneStreamFactory, SketchAction, LatLon, Plume, CO2, \\\r\n    plot_plumes, calculate_co2, calculate_turn_center, rotate_vector,\\\r\n    EARTH_CIRCUMFERENCE, FORWARD, TURN, ReadingPosition, unitary, latlon_plus_meters\r\nfrom rx.subject import Subject, BehaviorSubject\r\nimport rx.operators as ops\r\nimport matplotlib.pyplot as plt\r\nfrom crazyflie_examples.plot_util import *\r\nimport time\r\nfrom datetime import datetime, timedelta\r\nimport pandas as pd\r\n\r\nfrom crazyflie_interfaces.msg import LogDataGeneric\r\nfrom crazyflie_py import Crazyswarm\r\nimport rclpy\r\nimport os\r\nfrom rclpy.node import Node\r\nfrom geometry_msgs.msg import PoseStamped\r\nimport numpy as np\r\nimport math, time\r\nimport matplotlib.pyplot as plt\r\nfrom mpl_toolkits.mplot3d import Axes3D\r\nfrom shapely.geometry import Polygon, Point\r\nfrom geopy.distance import geodesic\r\nfrom matplotlib.patches import Polygon as MPolygon\r\n\r\nTAKEOFF_DURATION = 2.5\r\nHOVER_DURATION = 2.0\r\n\r\ndelta_time =0.6\r\n\r\n#EARTH_CIRCUMFERENCE = 40008000\r\nEARTH_CIRCUMFERENCE = 40075000\r\n\r\nt_inicial = 0\r\n\r\nclass Position_Subscriber(Node):\r\n    def __init__(self, drone_id, drone_controller):\r\n        super().__init__('pos_subscriber_{}'.format(drone_id))\r\n        self.drone_id = drone_id\r\n        self.drone_controller = drone_controller\r\n\r\n        self.subscription = self.create_subscription(\r\n            PoseStamped,\r\n            '/{}/pose'.format(drone_id),  # Adjusted to match the format in PART1, replace as necessary\r\n            self.position_listener_callback,\r\n            10)\r\n\r\n    def position_listener_callback(self, msg):\r\n        # Update drone_controller's current_position directly\r\n        self.drone_controller.position = np.append(self.drone_controller.position,[[msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]],axis=0)\r\n        #print(\"---------------------------------------------\")\r\n        #print(msg)\r\n        print(f\"{self.drone_id} position\", round(msg.pose.position.x, 4),round(msg.pose.position.y, 4),round(msg.pose.position.z, 4))\r\n\r\n\r\nclass Velocity_Subscriber(Node):\r\n    def __init__(self, drone_id, drone_controller):\r\n        super().__init__('vel_subscriber_{}'.format(drone_id))\r\n        self.drone_id = drone_id\r\n        self.drone_controller = drone_controller\r\n\r\n        # Subscription to custom Velocity topic\r\n        self.velocity_subscription = self.create_subscription(\r\n            LogDataGeneric,\r\n            '/{}/velocity'.format(drone_id),\r\n            self.velocity_listener_callback,\r\n            10)\r\n\r\n    def velocity_listener_callback(self, msg):\r\n        # Update drone_controller's current_velocity based on the custom velocity topic\r\n        self.drone_controller.velocity = np.append(self.drone_controller.velocity,[[msg.values[0], msg.values[1], msg.values[2]]], axis=0)\r\n        #print(\"---------------------------------------------\")\r\n        #print(msg)\r\n        #print(f\"{self.drone_id} velocity\", round(msg.values[0], 4), round(msg.values[1], 4), round(msg.values[2], 4))\r\n        tf = time.time()\r\n        self.drone_controller.t_velocity = np.append(self.drone_controller.t_velocity,[tf-t_inicial], axis=0)\r\n\r\n\r\ndef add_ruler(plt, ax, length):\r\n    height_scale = 0.7\r\n    lowerleft = [plt.xlim()[0], plt.ylim()[0]]\r\n    upperright = [plt.xlim()[1], plt.ylim()[1]]\r\n\r\n    # Calculate width by latitide\r\n    width = abs(1.0 * length / (EARTH_CIRCUMFERENCE / 360))\r\n    height = (upperright[1] - lowerleft[1]) * 0.018 * height_scale\r\n\r\n    location = [plt.xlim()[0] + (plt.xlim()[1] - plt.xlim()[0]) * .05,\r\n                plt.ylim()[1] - ((plt.ylim()[1] - plt.ylim()[0]) * (0.05 + (height_scale * .04)))]\r\n\r\n    ax.add_patch(Rectangle(location, width, height, ec=(0, 0, 0, 1), fc=(1, 1, 1, 1), lw=height_scale))\r\n    ax.add_patch(Rectangle(location, width / 2, height, ec=(0, 0, 0, 1), fc=(0, 0, 0, 1), lw=height_scale))\r\n    ax.annotate(\"0\", xy=(location[0], location[1] + (1.5 * height)), ha='center')\r\n    ax.annotate(\"{} m\".format(length), xy=(location[0] + width, location[1] + (1.5 * height)), ha='center')\r\n\r\n\r\nclass Drone:\r\n\r\n    def __init__(self, position, max_acceleration_value=0.05):\r\n        self.start_lat_lon = position\r\n        self.position = (0, 0, 0)\r\n        self.velocity = (0, 0, 0)\r\n        self.acceleration = (0, 0, 0)\r\n        self.max_acceleration = [max_acceleration_value, max_acceleration_value]\r\n        self.max_velocity = 0.15\r\n        self.dt = delta_time\r\n\r\n    def update_velocity(self, desired_velocity, cf,uav,aux):\r\n        velocity_scalar = 5\r\n        # desired_acceleration = tuple((dv - v) / self.dt for v, dv in zip(self.velocity, desired_velocity))\r\n        #\r\n        #\r\n        # acceleration_magnitude = np.linalg.norm(desired_acceleration)\r\n        # if acceleration_magnitude > self.max_acceleration[uav]:\r\n        #     desired_acceleration = tuple(\r\n        #         a / acceleration_magnitude * self.max_acceleration[uav] for a in desired_acceleration)\r\n        # print('Desired acc', desired_acceleration, 'velocity', self.velocity)\r\n        # self.velocity = tuple(v + a * self.dt for v, a in zip(self.velocity, desired_acceleration))\r\n        cf.velWorld([velocity_scalar * desired_velocity[0], velocity_scalar * desired_velocity[1], 0.0], 0.0)\r\n        #print('actual vel: ', self.velocity)\r\n        '''\r\n        \r\n        self.velocity=desired_velocity\r\n        velocity_magnitude = np.linalg.norm(self.velocity)\r\n        if velocity_magnitude > self.max_velocity:\r\n            self.velocity = tuple(\r\n                v / velocity_magnitude * self.max_velocity for v in self.velocity)\r\n        \r\n        #cf.velWorld([self.velocity[0], self.velocity[1], 0.0], 0.0)\r\n        desired_position = tuple(float(v) + float(a) * self.dt for v, a in zip(aux, self.velocity))\r\n        print([desired_position[0],desired_position[1],1.0])\r\n        '''\r\n        '''\r\n        \r\n        '''\r\n        '''\r\n        if uav==0:\r\n            altitud=0.92\r\n        else:\r\n            altitud=1.1\r\n        '''\r\n        '''\r\n        cf.goTo([desired_position[0],desired_position[1],altitud], 0.0, delta_time)\r\n        '''\r\n\r\n        '''\r\n        print('Desired vel',self.velocity)\r\n        print('Position', cf_position)\r\n        '''\r\n        return self.velocity\r\n\r\n    def update_position(self, cf_position, crazyflie):\r\n\r\n        # if crazyflie == 1:\r\n        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 0.8) / (\r\n        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))\r\n        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.2) / (EARTH_CIRCUMFERENCE / 360))\r\n        # else:\r\n        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 1.2) / (\r\n        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))\r\n        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.05) / (EARTH_CIRCUMFERENCE / 360))\r\n\r\n        longitude = self.start_lat_lon.longitude + ((cf_position[0]) / (\r\n                math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))\r\n        latitude = self.start_lat_lon.latitude + ((cf_position[1]) / (EARTH_CIRCUMFERENCE / 360))\r\n\r\n        return LatLon(latitude, longitude)\r\n\r\n\r\nclass DroneController:\r\n    def __init__(self, drone_id, cf, starting_position, time_helper):\r\n        self.drone_id = drone_id\r\n        self.cf = cf  # Make sure this is correctly passed as an argument\r\n        self.position = np.array([[0, 0, 0]])\r\n        self.velocity = np.array([[0, 0, 0]])\r\n        self.t_velocity = np.array([0])\r\n        self.des_velocity = np.array([[0, 0, 0]])\r\n        self.t_des_velocity = np.array([0])\r\n        self.time_helper = time_helper  # Ensure this is passed and used correctly\r\n        self.positions = []\r\n        self.starting_position = starting_position\r\n\r\n    def move_to_start_pos(self, duration):  # Remove unnecessary parameters\r\n        self.cf.goTo(self.starting_position, 0.0, duration)\r\n\r\n    def stop_setpoint(self):\r\n        self.cf.notifySetpointsStop()\r\n\r\n\r\ndef run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, base_file_name=None,\r\n               starting_direction=None, latest_gradient=None, zoom=None):\r\n    swarm = Crazyswarm()\r\n    timeHelper = swarm.timeHelper\r\n    allcfs = swarm.allcfs\r\n\r\n    global t_inicial\r\n    df1v = (0, 0, 0)\r\n    df2v = (0, 0, 0)\r\n    streamFactory = DroneStreamFactory()\r\n    announceStream = Subject()\r\n    df1SetVelocity = BehaviorSubject([0, 1])\r\n    df2SetVelocity = BehaviorSubject([0, 1])\r\n    sketchSubject = Subject()\r\n    vector1Publisher = Subject()\r\n    vector2Publisher = Subject()\r\n    df1Position = Subject()\r\n    df1Velocity = Subject()\r\n    df2Position = Subject()\r\n    df2Velocity = Subject()\r\n    df1co2 = Subject()\r\n    df2co2 = Subject()\r\n    streamFactory.put_drone(\"DF1\", df1Position, df1Velocity, df1co2)\r\n    streamFactory.put_drone(\"DF2\", df2Position, df1Velocity, df2co2)\r\n\r\n    action1 = SketchAction(\"DF1\", df1SetVelocity, announceStream, offset, lambda_value, \"DF2\", True, threshold,\r\n                           streamFactory, sketchSubject, vector1Publisher, starting_direction, latest_gradient)\r\n    action2 = SketchAction(\"DF2\", df2SetVelocity, announceStream, offset, lambda_value, \"DF1\", False, threshold,\r\n                           streamFactory, sketchSubject, vector2Publisher, starting_direction, latest_gradient)\r\n\r\n    action1.step()\r\n    action2.step()\r\n\r\n    df1 = Drone(df1p)\r\n    df2 = Drone(df2p)\r\n\r\n    df1latitudes = []\r\n    df2latitudes = []\r\n    df1longitudes = []\r\n    df2longitudes = []\r\n\r\n    unique_tokens = set()\r\n\r\n    scale = 0.012\r\n    arrow_head_width = 0.00002*scale\r\n    arrow_head_height = arrow_head_width\r\n    arrow_width = 0.000002*scale\r\n    arrow_length = 0.00005*scale\r\n\r\n    cf0 = allcfs.crazyflies[0]\r\n    cf1 = allcfs.crazyflies[1]\r\n    drone1_id = 'cf_1'\r\n    drone2_id = 'cf_2'\r\n\r\n    timeHelper.sleep(1.0)\r\n    configs = [\r\n        {'drone_id': drone1_id, 'starting_position': [0.8, -1.2, 1.0]},\r\n        {'drone_id': drone2_id, 'starting_position': [1.2, -1.05, 1.0]}\r\n    ]\r\n    Pos_subscribers = {}  # Dictionary to keep track of subscribers\r\n    Vel_subscribers = {}\r\n    drones = []\r\n    for i, cf in enumerate(allcfs.crazyflies):\r\n        drone_id = configs[i]['drone_id']\r\n        drone = DroneController(drone_id, cf, configs[i]['starting_position'], timeHelper)\r\n        Pos_subscribers[drone_id] = Position_Subscriber(drone_id, drone)\r\n        Vel_subscribers[drone_id] = Velocity_Subscriber(drone_id, drone)\r\n        drones.append(drone)\r\n    \r\n\r\n    t_inicial = time.time()\r\n\r\n    for drone in drones:\r\n        rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)\r\n        rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)\r\n\r\n    def add_algorithm_details(token):\r\n        #         if hasattr(token, 'vector_to_crossing') and hasattr(token, 'updated_position'):\r\n        #             plt.arrow(token.updated_position.longitude, token.updated_position.latitude, token.vector_to_crossing[0] * arrow_length, token.vector_to_crossing[1] * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height, width=arrow_width, fc='m', ec='m')\r\n        #             [dx, dy] = rotate_vector([token.x, token.y], (token.a * token.p))\r\n\r\n        #             plt.arrow(token.updated_position.longitude, token.updated_position.latitude, dx * arrow_length, dy * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height, width=arrow_width, fc='b', ec='b')\r\n        if not token in unique_tokens:\r\n            if token.movement == FORWARD:\r\n                plt.arrow(token.position.longitude, token.position.latitude, token.x * arrow_length,\r\n                          token.y * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height,\r\n                          width=arrow_width, fc='k', ec='k')\r\n            if token.movement == TURN:\r\n                center = calculate_turn_center(token, offset * lambda_value / math.sqrt(lambda_value))\r\n                plt.scatter(center.longitude, center.latitude, color='k', marker='+')\r\n                plt.arrow(token.position.longitude, token.position.latitude, token.x * arrow_length,\r\n                          token.y * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height,\r\n                          width=arrow_width, fc='b', ec='b')\r\n\r\n            if hasattr(token, 'gradient'):\r\n                plt.arrow(token.position.longitude, token.position.latitude, token.gradient[0] * 0.00005*scale,\r\n                          token.gradient[1] * 0.00005*scale, head_width=0.00002*scale, head_length=0.00002*scale, width=0.000002*scale, fc='r',\r\n                          ec='r')\r\n\r\n            #             if hasattr(token, 'prev_pt'):\r\n            #                 print(\"prev5_pt\")\r\n            #                 plt.scatter(token.prev_pt.longitude, token.prev_pt.latitude, color='k', s=5)\r\n\r\n            unique_tokens.add(token)\r\n\r\n    sketchSubject.subscribe(on_next=add_algorithm_details)\r\n\r\n    plt.figure(1,figsize=(10, 8))\r\n    plt.ticklabel_format(style='plain', useOffset=False)\r\n\r\n    experiment_directory= plot_plumes(plt, threshold, lon=[-106.59725, -106.59714], lat=[35.19725, 35.19732], plumes=plumes)\r\n\r\n    for plume in plumes:\r\n        plt.plot(plume.source.longitude, plume.source.latitude, marker='*', c='r', markeredgewidth=1,\r\n                 markeredgecolor=(0, 0, 0, 1), markersize=10)\r\n\r\n    starting_time = datetime(2020,1,1)\r\n    \r\n    for drone in drones:\r\n            rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)\r\n            rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)\r\n\r\n    try:\r\n        timeHelper.sleep(7.0)\r\n        allcfs.takeoff(targetHeight=0.5, duration=TAKEOFF_DURATION)\r\n        timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)\r\n\r\n        # Move all drones to their starting positions\r\n        for drone in drones:\r\n            drone.move_to_start_pos(4.0)\r\n\r\n        timeHelper.sleep(7.0)\r\n        for i in range(iterations):\r\n            # print(i)\r\n            for drone in drones:\r\n                rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)\r\n                rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)\r\n                if drone.drone_id == drone1_id:\r\n                    aux1 = drone.position[-1, :]\r\n                    df1v = drone.velocity[-1, :]\r\n                    print(df1v)\r\n                    df1p = df1.update_position(drone.position[-1, :], 1)\r\n                elif drone.drone_id == drone2_id:\r\n                    df2p = df2.update_position(drone.position[-1, :], 2)\r\n                    aux2 = drone.position[-1, :]\r\n\r\n            current_time = (starting_time + timedelta(seconds=i * 0.1))\r\n            df1co2v = calculate_co2(df1p, plumes)\r\n            df2co2v = calculate_co2(df2p, plumes)\r\n            df1Position.on_next([df1p, current_time])\r\n            df1Velocity.on_next([df1v, current_time])\r\n            df1co2.on_next([CO2(df1co2v), current_time])\r\n            df2Position.on_next([df2p, current_time])\r\n            df2Velocity.on_next([df2v, current_time])\r\n            df2co2.on_next([CO2(df2co2v), current_time])\r\n\r\n            print(i)\r\n\r\n\r\n            for drone in drones:\r\n                if drone.drone_id == drone1_id:\r\n                    df1v_des = df1.update_velocity(np.array(df1SetVelocity.pipe(ops.first()).run()) /45, cf0,0,aux1)\r\n                    drone.des_velocity = np.append(drone.des_velocity,[[df1v_des [0], df1v_des [1], 0]], axis=0)\r\n                    tf = time.time()\r\n                    drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)\r\n                elif drone.drone_id == drone2_id:\r\n                    df2v_des = df2.update_velocity(np.array(df2SetVelocity.pipe(ops.first()).run()) /45, cf1,1,aux2)\r\n                    drone.des_velocity = np.append(drone.des_velocity, [[df2v_des[0], df2v_des[1], 0]], axis=0)\r\n                    tf = time.time()\r\n                    drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)\r\n\r\n            df1latitudes.append(df1p.latitude)\r\n            df1longitudes.append(df1p.longitude)\r\n            df2latitudes.append(df2p.latitude)\r\n            df2longitudes.append(df2p.longitude)\r\n\r\n            timeHelper.sleep(0.1)\r\n\r\n    except KeyboardInterrupt:\r\n        print(\"Keyboard interrupt, triggering landing sequence\")\r\n\r\n    time.sleep(0.1)\r\n    cf0.notifySetpointsStop()\r\n    cf1.notifySetpointsStop()\r\n    time.sleep(0.05)\r\n    allcfs.land(targetHeight=0.03, duration=5.0)\r\n    time.sleep(6.0)\r\n\r\n    plt.scatter(df1longitudes, df1latitudes, s=4)\r\n    plt.scatter(df2longitudes, df2latitudes, s=4)\r\n    plt.axis('equal')\r\n    plt.grid()\r\n\r\n    add_ruler(plt, plt.gca(), 0.5)\r\n    \r\n    plt.gca().xaxis.set_visible(False)\r\n    plt.gca().yaxis.set_visible(False)\r\n\r\n    if zoom is not None:\r\n        plt.xlim(zoom[1])  # -106.5960, -106.5958\r\n        plt.ylim(zoom[0])  # 35.1959, 35.1963\r\n\r\n\r\n    base_directory = experiment_directory\r\n\r\n    if base_file_name is not None:\r\n        plt.savefig(f'{experiment_directory}/python_sim_small3.pdf', format=\"pdf\", dpi=1000)\r\n\r\n    # Ensure the experiment directory exists\r\n    os.makedirs(experiment_directory, exist_ok=True)\r\n\r\n    filename = os.path.join(experiment_directory, f\"drone1_latitude_trajectory.csv\")\r\n\r\n    df = pd.DataFrame(df1latitudes)\r\n    df.to_csv(filename, index=False)\r\n\r\n    filename = os.path.join(experiment_directory, f\"drone2_latitude_trajectory.csv\")\r\n\r\n    df = pd.DataFrame(df2latitudes)\r\n    df.to_csv(filename, index=False)\r\n\r\n    filename = os.path.join(experiment_directory, f\"drone1_longitude_trajectory.csv\")\r\n\r\n    df = pd.DataFrame(df1longitudes)\r\n    df.to_csv(filename, index=False)\r\n\r\n    filename = os.path.join(experiment_directory, f\"drone2_longitude_trajectory.csv\")\r\n\r\n    df = pd.DataFrame(df2longitudes)\r\n    df.to_csv(filename, index=False) \r\n\r\n    for subscriber in Pos_subscribers.values():\r\n        subscriber.destroy_node()\r\n\r\n    for subscriber in Vel_subscribers.values():\r\n        subscriber.destroy_node()\r\n    plt.show()\r\n\r\n    rclpy.shutdown()\r\n\r\ndef main(args=None) -> None:\r\n    plumes = [\r\n        Plume(LatLon(35.1973, -106.59719), -30, 12000, 2.0)\r\n    ]\r\n\r\n    threshold = 640\r\n\r\n    df1p = LatLon(35.197283, -106.5971785)\r\n    df2p = LatLon(35.197283, -106.5971785)\r\n\r\n    run_sketch(df1p, df2p, 0.4, 0.01, plumes, threshold, iterations=1300, base_file_name='single_plume')\r\n\r\nif __name__ == \"__main__\":\r\n    main()\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/main_sketch_codeV4.py b/main_sketch_codeV4.py
+--- a/main_sketch_codeV4.py	(revision 0e26fbe4de53cf630409f2e9aed4ad6565bff5d3)
++++ b/main_sketch_codeV4.py	(date 1743971584693)
+@@ -245,8 +245,8 @@
+ 
+     timeHelper.sleep(1.0)
+     configs = [
+-        {'drone_id': drone1_id, 'starting_position': [0.8, -1.2, 1.0]},
+-        {'drone_id': drone2_id, 'starting_position': [1.2, -1.05, 1.0]}
++        {'drone_id': drone1_id, 'starting_position': [0.8, -1.1, 1.0]},
++        {'drone_id': drone2_id, 'starting_position': [1.15, -0.95, 1.15]}
+     ]
+     Pos_subscribers = {}  # Dictionary to keep track of subscribers
+     Vel_subscribers = {}
+@@ -312,7 +312,7 @@
+             rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
+ 
+     try:
+-        timeHelper.sleep(7.0)
++        timeHelper.sleep(0.1)
+         allcfs.takeoff(targetHeight=0.5, duration=TAKEOFF_DURATION)
+         timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
+ 
+@@ -365,7 +365,7 @@
+             df2latitudes.append(df2p.latitude)
+             df2longitudes.append(df2p.longitude)
+ 
+-            timeHelper.sleep(0.1)
++            timeHelper.sleep(0.0)
+ 
+     except KeyboardInterrupt:
+         print("Keyboard interrupt, triggering landing sequence")
+@@ -382,7 +382,7 @@
+     plt.axis('equal')
+     plt.grid()
+ 
+-    add_ruler(plt, plt.gca(), 0.5)
++    add_ruler(plt, plt.gca(), 3.5)
+     
+     plt.gca().xaxis.set_visible(False)
+     plt.gca().yaxis.set_visible(False)
+@@ -418,7 +418,7 @@
+     filename = os.path.join(experiment_directory, f"drone2_longitude_trajectory.csv")
+ 
+     df = pd.DataFrame(df2longitudes)
+-    df.to_csv(filename, index=False) 
++    df.to_csv(filename, index=False)
+ 
+     for subscriber in Pos_subscribers.values():
+         subscriber.destroy_node()
+@@ -431,15 +431,15 @@
+ 
+ def main(args=None) -> None:
+     plumes = [
+-        Plume(LatLon(35.1973, -106.59719), -30, 12000, 2.0)
++        Plume(LatLon(35.197297, -106.597186), -30, 12000, 2.0)
+     ]
+ 
+-    threshold = 640
++    threshold = 660
+ 
+-    df1p = LatLon(35.197283, -106.5971785)
+-    df2p = LatLon(35.197283, -106.5971785)
++    df1p = LatLon(35.197218, -106.5971329)
++    df2p = LatLon(35.197218, -106.5971329)
+ 
+-    run_sketch(df1p, df2p, 0.4, 0.01, plumes, threshold, iterations=1300, base_file_name='single_plume')
++    run_sketch(df1p, df2p, 0.35, 0.001, plumes, threshold, iterations=10000, base_file_name='single_plume')
+ 
+ if __name__ == "__main__":
+     main()
+Index: sketch_double_plume.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/sketch_double_plume.py b/sketch_double_plume.py
+new file mode 100644
+--- /dev/null	(date 1744072447151)
++++ b/sketch_double_plume.py	(date 1744072447151)
+@@ -0,0 +1,498 @@
++import rx
++import math
++from crazyflie_examples.sketch import DroneStreamFactory, SketchAction, LatLon, Plume, CO2, \
++    plot_plumes, calculate_co2, calculate_turn_center, rotate_vector,\
++    EARTH_CIRCUMFERENCE, FORWARD, TURN, ReadingPosition, unitary, latlon_plus_meters
++from rx.subject import Subject, BehaviorSubject
++import rx.operators as ops
++import matplotlib.pyplot as plt
++from crazyflie_examples.plot_util import *
++import time
++from datetime import datetime, timedelta
++import pandas as pd
++
++from crazyflie_interfaces.msg import LogDataGeneric
++from crazyflie_py import Crazyswarm
++import rclpy
++import os
++from rclpy.node import Node
++from geometry_msgs.msg import PoseStamped
++import numpy as np
++import math, time
++import matplotlib.pyplot as plt
++from mpl_toolkits.mplot3d import Axes3D
++from shapely.geometry import Polygon, Point
++from geopy.distance import geodesic
++from matplotlib.patches import Polygon as MPolygon
++
++TAKEOFF_DURATION = 2.5
++HOVER_DURATION = 2.0
++
++delta_time =0.6
++
++#EARTH_CIRCUMFERENCE = 40008000
++EARTH_CIRCUMFERENCE = 40075000
++
++t_inicial = 0
++
++class Position_Subscriber(Node):
++    def __init__(self, drone_id, drone_controller):
++        super().__init__('pos_subscriber_{}'.format(drone_id))
++        self.drone_id = drone_id
++        self.drone_controller = drone_controller
++
++        self.subscription = self.create_subscription(
++            PoseStamped,
++            '/{}/pose'.format(drone_id),  # Adjusted to match the format in PART1, replace as necessary
++            self.position_listener_callback,
++            10)
++
++    def position_listener_callback(self, msg):
++        # Update drone_controller's current_position directly
++        self.drone_controller.position = np.append(self.drone_controller.position,[[msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]],axis=0)
++        #print("---------------------------------------------")
++        #print(msg)
++        print(f"{self.drone_id} position", round(msg.pose.position.x, 4),round(msg.pose.position.y, 4),round(msg.pose.position.z, 4))
++
++
++class Velocity_Subscriber(Node):
++    def __init__(self, drone_id, drone_controller):
++        super().__init__('vel_subscriber_{}'.format(drone_id))
++        self.drone_id = drone_id
++        self.drone_controller = drone_controller
++
++        # Subscription to custom Velocity topic
++        self.velocity_subscription = self.create_subscription(
++            LogDataGeneric,
++            '/{}/velocity'.format(drone_id),
++            self.velocity_listener_callback,
++            10)
++
++    def velocity_listener_callback(self, msg):
++        # Update drone_controller's current_velocity based on the custom velocity topic
++        self.drone_controller.velocity = np.append(self.drone_controller.velocity,[[msg.values[0], msg.values[1], msg.values[2]]], axis=0)
++        #print("---------------------------------------------")
++        #print(msg)
++        #print(f"{self.drone_id} velocity", round(msg.values[0], 4), round(msg.values[1], 4), round(msg.values[2], 4))
++        tf = time.time()
++        self.drone_controller.t_velocity = np.append(self.drone_controller.t_velocity,[tf-t_inicial], axis=0)
++
++
++def add_ruler(plt, ax, length):
++    height_scale = 0.7
++    lowerleft = [plt.xlim()[0], plt.ylim()[0]]
++    upperright = [plt.xlim()[1], plt.ylim()[1]]
++
++    # Calculate width by latitide
++    width = abs(1.0 * length / (EARTH_CIRCUMFERENCE / 360))
++    height = (upperright[1] - lowerleft[1]) * 0.018 * height_scale
++
++    location = [plt.xlim()[0] + (plt.xlim()[1] - plt.xlim()[0]) * .05,
++                plt.ylim()[1] - ((plt.ylim()[1] - plt.ylim()[0]) * (0.05 + (height_scale * .04)))]
++
++    ax.add_patch(Rectangle(location, width, height, ec=(0, 0, 0, 1), fc=(1, 1, 1, 1), lw=height_scale))
++    ax.add_patch(Rectangle(location, width / 2, height, ec=(0, 0, 0, 1), fc=(0, 0, 0, 1), lw=height_scale))
++    ax.annotate("0", xy=(location[0], location[1] + (1.5 * height)), ha='center')
++    ax.annotate("{} m".format(length), xy=(location[0] + width, location[1] + (1.5 * height)), ha='center')
++
++
++class Drone:
++
++    def __init__(self, position, max_acceleration_value=0.05):
++        self.start_lat_lon = position
++        self.position = (0, 0, 0)
++        self.velocity = (0, 0, 0)
++        self.acceleration = (0, 0, 0)
++        self.max_acceleration = [max_acceleration_value, max_acceleration_value]
++        self.max_velocity = 0.15
++        self.dt = delta_time
++
++    def update_velocity(self, desired_velocity, cf,uav,aux):
++        velocity_scalar = 5
++        # desired_acceleration = tuple((dv - v) / self.dt for v, dv in zip(self.velocity, desired_velocity))
++        #
++        #
++        # acceleration_magnitude = np.linalg.norm(desired_acceleration)
++        # if acceleration_magnitude > self.max_acceleration[uav]:
++        #     desired_acceleration = tuple(
++        #         a / acceleration_magnitude * self.max_acceleration[uav] for a in desired_acceleration)
++        # print('Desired acc', desired_acceleration, 'velocity', self.velocity)
++        # self.velocity = tuple(v + a * self.dt for v, a in zip(self.velocity, desired_acceleration))
++
++        # 0.75 1.25
++        if uav == 0:
++            altitud = 0.75
++        else:
++            altitud = 1.25
++
++        Kp = 0.1
++        cf.velWorld([velocity_scalar * desired_velocity[0], velocity_scalar * desired_velocity[1], Kp*(altitud-aux[2])], 0.0)
++
++        #print('actual vel: ', self.velocity)
++        '''
++        
++        self.velocity=desired_velocity
++        velocity_magnitude = np.linalg.norm(self.velocity)
++        if velocity_magnitude > self.max_velocity:
++            self.velocity = tuple(
++                v / velocity_magnitude * self.max_velocity for v in self.velocity)
++        
++        #cf.velWorld([self.velocity[0], self.velocity[1], 0.0], 0.0)
++        desired_position = tuple(float(v) + float(a) * self.dt for v, a in zip(aux, self.velocity))
++        print([desired_position[0],desired_position[1],1.0])
++        '''
++        '''
++        
++        '''
++        '''
++        if uav==0:
++            altitud=0.92
++        else:
++            altitud=1.1
++        '''
++        '''
++        cf.goTo([desired_position[0],desired_position[1],altitud], 0.0, delta_time)
++        '''
++
++        '''
++        print('Desired vel',self.velocity)
++        print('Position', cf_position)
++        '''
++        return self.velocity
++
++    def update_position(self, cf_position, crazyflie):
++
++        # if crazyflie == 1:
++        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 0.8) / (
++        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
++        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.2) / (EARTH_CIRCUMFERENCE / 360))
++        # else:
++        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 1.2) / (
++        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
++        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.05) / (EARTH_CIRCUMFERENCE / 360))
++
++        longitude = self.start_lat_lon.longitude + ((cf_position[0]) / (
++                math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
++        latitude = self.start_lat_lon.latitude + ((cf_position[1]) / (EARTH_CIRCUMFERENCE / 360))
++
++        return LatLon(latitude, longitude)
++
++
++class DroneController:
++    def __init__(self, drone_id, cf, starting_position, time_helper):
++        self.drone_id = drone_id
++        self.cf = cf  # Make sure this is correctly passed as an argument
++        self.position = np.array([[0, 0, 0]])
++        self.velocity = np.array([[0, 0, 0]])
++        self.t_velocity = np.array([0])
++        self.des_velocity = np.array([[0, 0, 0]])
++        self.t_des_velocity = np.array([0])
++        self.time_helper = time_helper  # Ensure this is passed and used correctly
++        self.positions = []
++        self.starting_position = starting_position
++
++    def move_to_start_pos(self, duration):  # Remove unnecessary parameters
++        self.cf.goTo(self.starting_position, 0.0, duration)
++
++    def stop_setpoint(self):
++        self.cf.notifySetpointsStop()
++
++
++def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, base_file_name=None,
++               starting_direction=None, latest_gradient=None, zoom=None):
++    swarm = Crazyswarm()
++    timeHelper = swarm.timeHelper
++    allcfs = swarm.allcfs
++
++    global t_inicial
++    df1v = (0, 0, 0)
++    df2v = (0, 0, 0)
++    streamFactory = DroneStreamFactory()
++    announceStream = Subject()
++    df1SetVelocity = BehaviorSubject([0, 1])
++    df2SetVelocity = BehaviorSubject([0, 1])
++    sketchSubject = Subject()
++    vector1Publisher = Subject()
++    vector2Publisher = Subject()
++    df1Position = Subject()
++    df1Velocity = Subject()
++    df2Position = Subject()
++    df2Velocity = Subject()
++    df1co2 = Subject()
++    df2co2 = Subject()
++    streamFactory.put_drone("DF1", df1Position, df1Velocity, df1co2)
++    streamFactory.put_drone("DF2", df2Position, df1Velocity, df2co2)
++
++    action1 = SketchAction("DF1", df1SetVelocity, announceStream, offset, lambda_value, "DF2", True, threshold,
++                           streamFactory, sketchSubject, vector1Publisher, starting_direction, latest_gradient)
++    action2 = SketchAction("DF2", df2SetVelocity, announceStream, offset, lambda_value, "DF1", False, threshold,
++                           streamFactory, sketchSubject, vector2Publisher, starting_direction, latest_gradient)
++
++    action1.step()
++    action2.step()
++
++    df1 = Drone(df1p)
++    df2 = Drone(df2p)
++
++    df1latitudes = []
++    df2latitudes = []
++    df1longitudes = []
++    df2longitudes = []
++
++    unique_tokens = set()
++
++    scale = 0.012
++    arrow_head_width = 0.00002*scale
++    arrow_head_height = arrow_head_width
++    arrow_width = 0.000002*scale
++    arrow_length = 0.00005*scale
++
++    cf0 = allcfs.crazyflies[0]
++    cf1 = allcfs.crazyflies[1]
++    drone1_id = 'cf_1'
++    drone2_id = 'cf_2'
++
++    timeHelper.sleep(1.0)
++    configs = [
++        {'drone_id': drone1_id, 'starting_position': [1.0, -0.9, 0.75]},
++        {'drone_id': drone2_id, 'starting_position': [1.2, -0.9, 1.25]}
++    ]
++    Pos_subscribers = {}  # Dictionary to keep track of subscribers
++    Vel_subscribers = {}
++    drones = []
++    for i, cf in enumerate(allcfs.crazyflies):
++        drone_id = configs[i]['drone_id']
++        drone = DroneController(drone_id, cf, configs[i]['starting_position'], timeHelper)
++        Pos_subscribers[drone_id] = Position_Subscriber(drone_id, drone)
++        Vel_subscribers[drone_id] = Velocity_Subscriber(drone_id, drone)
++        drones.append(drone)
++    
++
++    t_inicial = time.time()
++
++    for drone in drones:
++        rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
++        rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)
++
++    def add_algorithm_details(token):
++        #         if hasattr(token, 'vector_to_crossing') and hasattr(token, 'updated_position'):
++        #             plt.arrow(token.updated_position.longitude, token.updated_position.latitude, token.vector_to_crossing[0] * arrow_length, token.vector_to_crossing[1] * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height, width=arrow_width, fc='m', ec='m')
++        #             [dx, dy] = rotate_vector([token.x, token.y], (token.a * token.p))
++
++        #             plt.arrow(token.updated_position.longitude, token.updated_position.latitude, dx * arrow_length, dy * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height, width=arrow_width, fc='b', ec='b')
++        if not token in unique_tokens:
++            if token.movement == FORWARD:
++                plt.arrow(token.position.longitude, token.position.latitude, token.x * arrow_length,
++                          token.y * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height,
++                          width=arrow_width, fc='k', ec='k')
++            if token.movement == TURN:
++                center = calculate_turn_center(token, offset * lambda_value / math.sqrt(lambda_value))
++                plt.scatter(center.longitude, center.latitude, color='k', marker='+')
++                plt.arrow(token.position.longitude, token.position.latitude, token.x * arrow_length,
++                          token.y * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height,
++                          width=arrow_width, fc='b', ec='b')
++
++            if hasattr(token, 'gradient'):
++                plt.arrow(token.position.longitude, token.position.latitude, token.gradient[0] * 0.00005*scale,
++                          token.gradient[1] * 0.00005*scale, head_width=0.00002*scale, head_length=0.00002*scale, width=0.000002*scale, fc='r',
++                          ec='r')
++
++            #             if hasattr(token, 'prev_pt'):
++            #                 print("prev5_pt")
++            #                 plt.scatter(token.prev_pt.longitude, token.prev_pt.latitude, color='k', s=5)
++
++            unique_tokens.add(token)
++
++    sketchSubject.subscribe(on_next=add_algorithm_details)
++
++    plt.figure(1,figsize=(10, 8))
++    plt.ticklabel_format(style='plain', useOffset=False)
++
++    experiment_directory= plot_plumes(plt, threshold, lon=[-106.59725, -106.59714], lat=[35.19725, 35.19732], plumes=plumes)
++
++    for plume in plumes:
++        plt.plot(plume.source.longitude, plume.source.latitude, marker='*', c='r', markeredgewidth=1,
++                 markeredgecolor=(0, 0, 0, 1), markersize=10)
++
++    starting_time = datetime(2020,1,1)
++    
++    for drone in drones:
++            rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)
++            rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
++
++    try:
++        timeHelper.sleep(0.1)
++        allcfs.takeoff(targetHeight=0.5, duration=TAKEOFF_DURATION)
++        timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
++
++        # Move all drones to their starting positions
++        for drone in drones:
++            drone.move_to_start_pos(6.0)
++
++        timeHelper.sleep(9.0)
++        for i in range(iterations):
++            # print(i)
++            for drone in drones:
++                rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)
++                rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
++                if drone.drone_id == drone1_id:
++                    aux1 = drone.position[-1, :]
++                    df1v = drone.velocity[-1, :]
++                    print(df1v)
++                    df1p = df1.update_position(drone.position[-1, :], 1)
++                elif drone.drone_id == drone2_id:
++                    df2p = df2.update_position(drone.position[-1, :], 2)
++                    aux2 = drone.position[-1, :]
++
++            current_time = (starting_time + timedelta(seconds=i * 0.1))
++            df1co2v = calculate_co2(df1p, plumes)
++            df2co2v = calculate_co2(df2p, plumes)
++            df1Position.on_next([df1p, current_time])
++            df1Velocity.on_next([df1v, current_time])
++            df1co2.on_next([CO2(df1co2v), current_time])
++            df2Position.on_next([df2p, current_time])
++            df2Velocity.on_next([df2v, current_time])
++            df2co2.on_next([CO2(df2co2v), current_time])
++
++            print(i)
++
++
++            for drone in drones:
++                if drone.drone_id == drone1_id:
++                    df1v_des = df1.update_velocity(np.array(df1SetVelocity.pipe(ops.first()).run()) /65, cf0,0,aux1)
++                    drone.des_velocity = np.append(drone.des_velocity,[[df1v_des [0], df1v_des [1], 0]], axis=0)
++                    tf = time.time()
++                    drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)
++                elif drone.drone_id == drone2_id:
++                    df2v_des = df2.update_velocity(np.array(df2SetVelocity.pipe(ops.first()).run()) /65, cf1,1,aux2)
++                    drone.des_velocity = np.append(drone.des_velocity, [[df2v_des[0], df2v_des[1], 0]], axis=0)
++                    tf = time.time()
++                    drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)
++
++            df1latitudes.append(df1p.latitude)
++            df1longitudes.append(df1p.longitude)
++            df2latitudes.append(df2p.latitude)
++            df2longitudes.append(df2p.longitude)
++
++            timeHelper.sleep(0.0)
++
++    except KeyboardInterrupt:
++        print("Keyboard interrupt, triggering landing sequence")
++
++    time.sleep(0.1)
++    cf0.notifySetpointsStop()
++    cf1.notifySetpointsStop()
++    time.sleep(0.05)
++    allcfs.land(targetHeight=0.03, duration=5.0)
++    time.sleep(6.0)
++
++    plt.scatter(df1longitudes, df1latitudes, s=4)
++    plt.scatter(df2longitudes, df2latitudes, s=4)
++    plt.axis('equal')
++    plt.grid()
++
++    add_ruler(plt, plt.gca(), 0.5)
++    
++    plt.gca().xaxis.set_visible(False)
++    plt.gca().yaxis.set_visible(False)
++
++    if zoom is not None:
++        plt.xlim(zoom[1])  # -106.5960, -106.5958
++        plt.ylim(zoom[0])  # 35.1959, 35.1963
++
++
++    base_directory = experiment_directory
++
++    if base_file_name is not None:
++        plt.savefig(f'{experiment_directory}/python_sim_small3.pdf', format="pdf", dpi=1000)
++
++    # Ensure the experiment directory exists
++    os.makedirs(experiment_directory, exist_ok=True)
++
++    filename = os.path.join(experiment_directory, f"drone1_latitude_trajectory.csv")
++
++    df = pd.DataFrame(df1latitudes)
++    df.to_csv(filename, index=False)
++
++    filename = os.path.join(experiment_directory, f"drone2_latitude_trajectory.csv")
++
++    df = pd.DataFrame(df2latitudes)
++    df.to_csv(filename, index=False)
++
++    filename = os.path.join(experiment_directory, f"drone1_longitude_trajectory.csv")
++
++    df = pd.DataFrame(df1longitudes)
++    df.to_csv(filename, index=False)
++
++    filename = os.path.join(experiment_directory, f"drone2_longitude_trajectory.csv")
++
++    df = pd.DataFrame(df2longitudes)
++    df.to_csv(filename, index=False) 
++
++    for subscriber in Pos_subscribers.values():
++        subscriber.destroy_node()
++
++    for subscriber in Vel_subscribers.values():
++        subscriber.destroy_node()
++    plt.show()
++
++    rclpy.shutdown()
++
++def plot_plumes_temp(df1p, df2p, threshold, plumes):
++
++
++    plt.figure(1, figsize=(10, 8))
++    plt.ticklabel_format(style='plain', useOffset=False)
++
++    for i in range(1):
++        print(threshold + (i*10))
++        plot_plumes(plt, threshold + (i * 10), lon=[-106.59725, -106.59714], lat=[35.19725, 35.19732],
++                                       plumes=plumes)
++
++    for plume in plumes:
++        plt.plot(plume.source.longitude, plume.source.latitude, marker='*', c='r', markeredgewidth=1,
++                 markeredgecolor=(0, 0, 0, 1), markersize=10)
++
++    df1latitudes = []
++    df2latitudes = []
++    df1longitudes = []
++    df2longitudes = []
++
++    df1latitudes.append(df1p.latitude)
++    df1longitudes.append(df1p.longitude)
++    df2latitudes.append(df2p.latitude)
++    df2longitudes.append(df2p.longitude)
++
++    plt.scatter(df1longitudes, df1latitudes, s=4)
++    plt.scatter(df2longitudes, df2latitudes, s=4)
++    plt.axis('equal')
++    plt.grid()
++
++    add_ruler(plt, plt.gca(), 3.5)
++
++    plt.gca().xaxis.set_visible(False)
++    plt.gca().yaxis.set_visible(False)
++
++
++    plt.show()
++
++    rclpy.shutdown()
++
++def main(args=None) -> None:
++    plumes = [
++        Plume(LatLon(35.19727,  -106.5971697), -30, 3170, 1.3),
++        Plume(LatLon(35.197271, -106.597152), -35, 1200, 1.2)
++    ]
++
++    threshold = 550
++
++    df1p = LatLon(35.197264, -106.597159)
++    df2p = LatLon(35.197264, -106.597159)
++
++
++
++    run_sketch(df1p, df2p, 0.2, 0.005, plumes, threshold, iterations=5500, base_file_name='single_plume')
++    # plot_plumes_temp(df1p, df2p, threshold, plumes)
++
++if __name__ == "__main__":
++    main()
+Index: ../../crazyflie/config/config.rviz
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>Panels:\n  - Class: rviz_common/Displays\n    Help Height: 78\n    Name: Displays\n    Property Tree Widget:\n      Expanded:\n        - /Global Options1\n        - /Status1\n        - /Axes1\n      Splitter Ratio: 0.5\n    Tree Height: 363\n  - Class: rviz_common/Selection\n    Name: Selection\n  - Class: rviz_common/Tool Properties\n    Expanded:\n      - /2D Goal Pose1\n      - /Publish Point1\n    Name: Tool Properties\n    Splitter Ratio: 0.5886790156364441\n  - Class: rviz_common/Views\n    Expanded:\n      - /Current View1\n    Name: Views\n    Splitter Ratio: 0.5\n  - Class: rviz_common/Time\n    Experimental: false\n    Name: Time\n    SyncMode: 0\n    SyncSource: \"\"\nVisualization Manager:\n  Class: \"\"\n  Displays:\n    - Alpha: 0.5\n      Cell Size: 1\n      Class: rviz_default_plugins/Grid\n      Color: 160; 160; 164\n      Enabled: true\n      Line Style:\n        Line Width: 0.029999999329447746\n        Value: Lines\n      Name: Grid\n      Normal Cell Count: 0\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Plane: XY\n      Plane Cell Count: 10\n      Reference Frame: <Fixed Frame>\n      Value: true\n    - Class: rviz_default_plugins/Axes\n      Enabled: true\n      Length: 0.20000000298023224\n      Name: Axes\n      Radius: 0.019999999552965164\n      Reference Frame: world\n      Value: true\n    - Class: rviz_default_plugins/TF\n      Enabled: true\n      Frame Timeout: 15\n      Frames:\n        All Enabled: true\n        cf_1:\n          Value: true\n        cf_10:\n          Value: true\n        cf_11:\n          Value: true\n        cf_12:\n          Value: true\n        cf_13:\n          Value: true\n        cf_14:\n          Value: true\n        cf_15:\n          Value: true\n        cf_16:\n          Value: true\n        cf_2:\n          Value: true\n        cf_3:\n          Value: true\n        cf_4:\n          Value: true\n        cf_5:\n          Value: true\n        cf_6:\n          Value: true\n        cf_7:\n          Value: true\n        cf_8:\n          Value: true\n        cf_9:\n          Value: true\n        world:\n          Value: true\n      Marker Scale: 1\n      Name: TF\n      Show Arrows: false\n      Show Axes: true\n      Show Names: true\n      Tree:\n        world:\n          cf_1:\n            {}\n          cf_10:\n            {}\n          cf_11:\n            {}\n          cf_12:\n            {}\n          cf_13:\n            {}\n          cf_14:\n            {}\n          cf_15:\n            {}\n          cf_16:\n            {}\n          cf_2:\n            {}\n          cf_3:\n            {}\n          cf_4:\n            {}\n          cf_5:\n            {}\n          cf_6:\n            {}\n          cf_7:\n            {}\n          cf_8:\n            {}\n          cf_9:\n            {}\n      Update Interval: 0\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_1/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_2/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_3/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_4/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_5/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_6/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_7/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_8/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_9/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_10/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_11/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_12/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_13/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_14/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_15/mpc_solution_path\n      Value: true\n    - Alpha: 1\n      Buffer Length: 1\n      Class: rviz_default_plugins/Path\n      Color: 25; 255; 0\n      Enabled: true\n      Head Diameter: 0.30000001192092896\n      Head Length: 0.20000000298023224\n      Length: 0.30000001192092896\n      Line Style: Lines\n      Line Width: 0.029999999329447746\n      Name: Path\n      Offset:\n        X: 0\n        Y: 0\n        Z: 0\n      Pose Color: 255; 85; 255\n      Pose Style: None\n      Radius: 0.029999999329447746\n      Shaft Diameter: 0.10000000149011612\n      Shaft Length: 0.10000000149011612\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        Filter size: 10\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /cf_16/mpc_solution_path\n      Value: true\n  Enabled: true\n  Global Options:\n    Background Color: 48; 48; 48\n    Fixed Frame: world\n    Frame Rate: 30\n  Name: root\n  Tools:\n    - Class: rviz_default_plugins/Interact\n      Hide Inactive Objects: true\n    - Class: rviz_default_plugins/MoveCamera\n    - Class: rviz_default_plugins/Select\n    - Class: rviz_default_plugins/FocusCamera\n    - Class: rviz_default_plugins/Measure\n      Line color: 128; 128; 0\n    - Class: rviz_default_plugins/SetInitialPose\n      Covariance x: 0.25\n      Covariance y: 0.25\n      Covariance yaw: 0.06853891909122467\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /initialpose\n    - Class: rviz_default_plugins/SetGoal\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /goal_pose\n    - Class: rviz_default_plugins/PublishPoint\n      Single click: true\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /clicked_point\n  Transformation:\n    Current:\n      Class: rviz_default_plugins/TF\n  Value: true\n  Views:\n    Current:\n      Class: rviz_default_plugins/Orbit\n      Distance: 6.765847682952881\n      Enable Stereo Rendering:\n        Stereo Eye Separation: 0.05999999865889549\n        Stereo Focal Distance: 1\n        Swap Stereo Eyes: false\n        Value: false\n      Focal Point:\n        X: 0.16920098662376404\n        Y: 1.6383566856384277\n        Z: 1.135256290435791\n      Focal Shape Fixed Size: true\n      Focal Shape Size: 0.05000000074505806\n      Invert Z Axis: false\n      Name: Current View\n      Near Clip Distance: 0.009999999776482582\n      Pitch: 0.2853986620903015\n      Target Frame: <Fixed Frame>\n      Value: Orbit (rviz)\n      Yaw: 3.1435842514038086\n    Saved: ~\nWindow Geometry:\n  Displays:\n    collapsed: true\n  Height: 877\n  Hide Left Dock: true\n  Hide Right Dock: true\n  QMainWindow State: 000000ff00000000fd0000000400000000000001560000035afc0200000008fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073000000003d0000035a000000c900fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261000000010000010f000002b0fc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000003d000002b0000000a400fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e10000019700000003000004fa0000003efc0100000002fb0000000800540069006d00650000000000000004fa000002fb00fffffffb0000000800540069006d006501000000000000045000000000000000000000036a0000033a00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730000000000ffffffff0000000000000000\n  Selection:\n    collapsed: false\n  Time:\n    collapsed: false\n  Tool Properties:\n    collapsed: false\n  Views:\n    collapsed: true\n  Width: 874\n  X: 1046\n  Y: 27\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/../../crazyflie/config/config.rviz b/../../crazyflie/config/config.rviz
+--- a/../../crazyflie/config/config.rviz	(revision 0e26fbe4de53cf630409f2e9aed4ad6565bff5d3)
++++ b/../../crazyflie/config/config.rviz	(date 1743988723367)
+@@ -1,6 +1,6 @@
+ Panels:
+   - Class: rviz_common/Displays
+-    Help Height: 78
++    Help Height: 138
+     Name: Displays
+     Property Tree Widget:
+       Expanded:
+@@ -8,7 +8,7 @@
+         - /Status1
+         - /Axes1
+       Splitter Ratio: 0.5
+-    Tree Height: 363
++    Tree Height: 270
+   - Class: rviz_common/Selection
+     Name: Selection
+   - Class: rviz_common/Tool Properties
+@@ -61,37 +61,9 @@
+       Frames:
+         All Enabled: true
+         cf_1:
+-          Value: true
+-        cf_10:
+-          Value: true
+-        cf_11:
+-          Value: true
+-        cf_12:
+-          Value: true
+-        cf_13:
+-          Value: true
+-        cf_14:
+-          Value: true
+-        cf_15:
+-          Value: true
+-        cf_16:
+           Value: true
+         cf_2:
+           Value: true
+-        cf_3:
+-          Value: true
+-        cf_4:
+-          Value: true
+-        cf_5:
+-          Value: true
+-        cf_6:
+-          Value: true
+-        cf_7:
+-          Value: true
+-        cf_8:
+-          Value: true
+-        cf_9:
+-          Value: true
+         world:
+           Value: true
+       Marker Scale: 1
+@@ -103,36 +75,8 @@
+         world:
+           cf_1:
+             {}
+-          cf_10:
+-            {}
+-          cf_11:
+-            {}
+-          cf_12:
+-            {}
+-          cf_13:
+-            {}
+-          cf_14:
+-            {}
+-          cf_15:
+-            {}
+-          cf_16:
+-            {}
+           cf_2:
+             {}
+-          cf_3:
+-            {}
+-          cf_4:
+-            {}
+-          cf_5:
+-            {}
+-          cf_6:
+-            {}
+-          cf_7:
+-            {}
+-          cf_8:
+-            {}
+-          cf_9:
+-            {}
+       Update Interval: 0
+       Value: true
+     - Alpha: 1
+@@ -636,26 +580,26 @@
+         Swap Stereo Eyes: false
+         Value: false
+       Focal Point:
+-        X: 0.16920098662376404
+-        Y: 1.6383566856384277
+-        Z: 1.135256290435791
++        X: -0.0866464376449585
++        Y: -0.019041649997234344
++        Z: 1.0188961029052734
+       Focal Shape Fixed Size: true
+       Focal Shape Size: 0.05000000074505806
+       Invert Z Axis: false
+       Name: Current View
+       Near Clip Distance: 0.009999999776482582
+-      Pitch: 0.2853986620903015
++      Pitch: 1.5697963237762451
+       Target Frame: <Fixed Frame>
+       Value: Orbit (rviz)
+-      Yaw: 3.1435842514038086
++      Yaw: 4.713582992553711
+     Saved: ~
+ Window Geometry:
+   Displays:
+     collapsed: true
+-  Height: 877
++  Height: 2032
+   Hide Left Dock: true
+   Hide Right Dock: true
+-  QMainWindow State: 000000ff00000000fd0000000400000000000001560000035afc0200000008fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073000000003d0000035a000000c900fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261000000010000010f000002b0fc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000003d000002b0000000a400fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e10000019700000003000004fa0000003efc0100000002fb0000000800540069006d00650000000000000004fa000002fb00fffffffb0000000800540069006d006501000000000000045000000000000000000000036a0000033a00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730000000000ffffffff0000000000000000
++  QMainWindow State: 000000ff00000000fd0000000400000000000001560000035afc0200000008fb0000001200530065006c0065006300740069006f006e00000001e10000009b000000b000fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073000000003d0000035a0000018200fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261000000010000010f000002b0fc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000003d000002b00000013200fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e10000019700000003000004fa0000003efc0100000002fb0000000800540069006d00650000000000000004fa0000058100fffffffb0000000800540069006d006501000000000000045000000000000000000000073e0000079b00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730000000000ffffffff0000000000000000
+   Selection:
+     collapsed: false
+   Time:
+@@ -664,6 +608,6 @@
+     collapsed: false
+   Views:
+     collapsed: true
+-  Width: 874
+-  X: 1046
+-  Y: 27
++  Width: 1854
++  X: 1986
++  Y: 54
+Index: ../../crazyflie/config/crazyflies.yaml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># named list of all robots\nrobots:\n  # cf:\n  #   enabled: false\n  #   uri: radio://0/80/2M/E7E7E7E7E7\n  #   # uri: udp://0.0.0.0:19850\n  #   # uri: usb://0\n  #   initial_position: [0.0, 0.0, 0.0]\n  #   type: cf  # see robot_types\n  #   # firmware_params:\n  #   #   kalman:\n  #   #     pNAcc_xy: 1.0 # default 0.50x\n\n  cf_1:\n    enabled: true\n    #uri: radio://0/100/2M/E7E7E7E701\n    uri: udp://0.0.0.0:19850\n    initial_position: [0.0, 0.0, 0.0]\n    type: cf_sim  # see robot_types\n    # firmware_params:\n      # posCtlPid:\n        #xKp: 18.0 # Proportional gain\n        # xKi: 0.5 # Integral gain\n        # xKd: 4.0 # Derivative gain \n        \n  cf_2:\n    enabled: true\n    #uri: radio://0/100/2M/E7E7E7E707\n    uri: udp://0.0.0.0:19851\n    initial_position: [-0.3,0.0, 0.0]\n    type: cf_sim2  # see robot_types\n\n  cf_3:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E703\n    #uri: udp://0.0.0.0:19852\n    initial_position: [-0.5, 0.5, 0.0]\n    type: cf_sim  # see robot_types\n\n  cf_4:\n    enabled: false\n    #uri: radio://0/100/2M/E7E7E7E70B\n    uri: udp://0.0.0.0:19853\n    initial_position: [0.3,0.0,0.0]\n    type: cf_sim  # see robot_types\n\n  cf_5:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E705\n    initial_position: [-0.5, 0.0, 0.0]\n    type: cf_sim  # see robot_types\n\n  cf_6:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E706\n    initial_position: [0.0, -0.6, 0.0]\n    type: cf_sim  # see robot_types\n\n  cf_7:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E707\n    initial_position: [0.0, 0.0, 0.0]\n    type: cf_sim  # see robot_types\n\n  cf_8:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E708\n    initial_position: [0.0, 0.5, 0.0]\n    type: cf_sim  # see robot_types\n\n  cf_9:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E709\n    initial_position: [-0.5, 0.5, 0.0]\n    type: cf_sim  # see robot_types\n\n  cf_10:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E70A\n    initial_position: [ 0.0, -0.5,0.0]\n    type: cf_sim  # see robot_types\n\n  cf_11:\n    enabled: false\n    uri: radio://0/100/2M/E7E7E7E70B\n    initial_position: [0.5, 0.5, 0.0]\n    type: cf_sim  # see robot_types\n\n  cf_12:\n    enabled: false\n    uri: udp://0.0.0.0:19861\n    initial_position: [2.0, 1.0, 0.0]\n    type: cf_sim  # see robot_types\n  \n  obstacle:\n    enabled: false\n    initial_position: [0.0, 0.0, 1.32]\n    type: marker  # see robot_types\n\n \n# Definition of the various robot types\nrobot_types:\n  cf_sim:\n    motion_capture:\n      enabled: true\n      # only if enabled; see motion_capture.yaml\n      marker: mocap_deck\n      dynamics: default\n    big_quad: false\n    # battery:\n    #   voltage_warning: 3.8  # V\n    #   voltage_critical: 3.7 # V\n    firmware_logging:\n      enabled: true\n      default_topics:\n        pose:\n          frequency: 50\n      custom_topics:\n        position:\n          frequency: 50\n          vars: [\"stateEstimate.x\", \"stateEstimate.y\", \"stateEstimate.z\"]\n        velocity:\n          frequency: 50\n          vars: [\"stateEstimate.vx\", \"stateEstimate.vy\", \"stateEstimate.vz\"]\n        \n        # pos_innov:\n        #   frequency: 50\n        #   vars: [\"kalman.posInnoX\", \"kalman.posInnoY\", \"kalman.posInnoZ\"]\n        \n  cf_sim2:\n    motion_capture:\n      enabled: true\n      # only if enabled; see motion_capture.yaml\n      marker: mocap_deck2\n      dynamics: default\n    big_quad: false\n    # battery:\n    #   voltage_warning: 3.8  # V\n    #   voltage_critical: 3.7 # V\n    firmware_logging:\n      enabled: true\n      default_topics:\n        pose:\n          frequency: 50\n      custom_topics:\n        velocity:\n          frequency: 50\n          vars: [\"stateEstimate.vx\", \"stateEstimate.vy\", \"stateEstimate.vz\"]\n  marker:\n    connection: false\n    motion_capture:\n      enabled: true\n      marker: 4_markers_object\n      dynamics: default\n    firmware_logging:\n      enabled: true\n      default_topics:\n        pose:\n          frequency: 50\n      custom_topics:\n      #   position:\n      #     frequency: 50\n      #     vars: [\"stateEstimate.x\", \"stateEstimate.y\", \"stateEstimate.z\"]\n        velocity:\n          frequency: 50\n          vars: [\"stateEstimate.vx\", \"stateEstimate.vy\", \"stateEstimate.vz\"]\n        attitude:\n          frequency: 50\n          vars: [\"stateEstimate.roll\", \"stateEstimate.pitch\", \"stateEstimate.yaw\"]\n        # pos_innov:\n        #   frequency: 50\n        #   vars: [\"kalman.posInnoX\", \"kalman.posInnoY\", \"kalman.posInnoZ\"]\n    \n \n# global settings for all robots\nall:\n  # firmware logging for all drones (use robot_types/type_name to set per type, or\n  # robots/drone_name to set per drone)\n  # firmware_logging:\n  #   enabled: false\n  #   default_topics:\n  #    # remove to disable default topic\n  #     pose:\n  #       frequency: 10 # Hz\n      # odom:\n      #   frequency: 100 # Hz\n    # custom_topics:\n    #  topic_name1:\n    #    frequency: 10 # Hz\n    #    vars: [\"kalman.stateX\", \"kalman.stateY\", \"kalman.stateZ\"]\n    #  topic_name2:\n    #    frequency: 1 # Hz\n    #    vars: [\"stabilizer.roll\", \"stabilizer.pitch\", \"stabilizer.yaw\"]\n  # firmware parameters for all drones (use robot_types/type_name to set per type, or\n  # robots/drone_name to set per drone)\n  firmware_params:\n    commander:\n      enHighLevel: 1\n    stabilizer:\n      estimator: 2 # 1: complementary, 2: kalman\n      controller: 1 # 1: PID, 2: mellinger\n    # ring:\n    #   effect: 16 # 6: double spinner, 7: solid color, 16: packetRate\n    #   solidBlue: 255 # if set to solid color\n    #   solidGreen: 0 # if set to solid color\n    #   solidRed: 0 # if set to solid color\n    #   headlightEnable: 0\n    locSrv:\n      extPosStdDev: 1e-3\n      extQuatStdDev: 0.5e-1\n    # kalman:\n    #   resetEstimation: 1\n  broadcasts:\n    num_repeats: 15 # number of times broadcast commands are repeated\n    delay_between_repeats_ms: 1 # delay in milliseconds between individual repeats\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/../../crazyflie/config/crazyflies.yaml b/../../crazyflie/config/crazyflies.yaml
+--- a/../../crazyflie/config/crazyflies.yaml	(revision 0e26fbe4de53cf630409f2e9aed4ad6565bff5d3)
++++ b/../../crazyflie/config/crazyflies.yaml	(date 1744067662788)
+@@ -13,9 +13,9 @@
+ 
+   cf_1:
+     enabled: true
+-    #uri: radio://0/100/2M/E7E7E7E701
+-    uri: udp://0.0.0.0:19850
+-    initial_position: [0.0, 0.0, 0.0]
++    uri: radio://0/100/2M/E7E7E7E701
++    #uri: udp://0.0.0.0:19850
++    initial_position: [-0.3, 0.0, 0.0]
+     type: cf_sim  # see robot_types
+     # firmware_params:
+       # posCtlPid:
+@@ -25,9 +25,9 @@
+         
+   cf_2:
+     enabled: true
+-    #uri: radio://0/100/2M/E7E7E7E707
+-    uri: udp://0.0.0.0:19851
+-    initial_position: [-0.3,0.0, 0.0]
++    uri: radio://0/100/2M/E7E7E7E707
++    #uri: udp://0.0.0.0:19851
++    initial_position: [0.3,0.0, 0.0]
+     type: cf_sim2  # see robot_types
+ 
+   cf_3:
+Index: ../setup.cfg
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>[options.entry_points]\nconsole_scripts =\n    hello_world = crazyflie_examples.hello_world:main\n    hello_world2 = crazyflie_examples.hello_world2:main\n    hello_world3 = crazyflie_examples.hello_world3:main\n    nice_hover = crazyflie_examples.nice_hover:main\n    bennett = crazyflie_examples.bennett:main\n    main_sketch_code_big_plume = crazyflie_examples.main_sketch_code_big_plume:main\n    figure8 = crazyflie_examples.figure8:main\n    plot_util = crazyflie_examples.plot_util:main\n    sketch = crazyflie_examples.sketch:main\n    main_sketch_codeV1 = crazyflie_examples.main_sketch_codeV1:main\n    main_sketch_codeV2 = crazyflie_examples.main_sketch_codeV2:main\n    main_sketch_codeV3 = crazyflie_examples.main_sketch_codeV3:main\n    main_sketch_codeV4 = crazyflie_examples.main_sketch_codeV4:main\n    main_sketch_codeV4_rep = crazyflie_examples.main_sketch_codeV4_rep:main\n    circumnavigation = crazyflie_examples.circumnavigation:main\n    plume_rv = crazyflie_examples.plume_rv:main\n    plume_rv_V4 = crazyflie_examples.plume_rv_V4:main\n    cf_2_correccion = crazyflie_examples.cf_2_correccion:main\n    multi_trajectory = crazyflie_examples.multi_trajectory:main\n    cmd_full_state = crazyflie_examples.cmd_full_state:main\n    set_param = crazyflie_examples.set_param:main\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/../setup.cfg b/../setup.cfg
+--- a/../setup.cfg	(revision 0e26fbe4de53cf630409f2e9aed4ad6565bff5d3)
++++ b/../setup.cfg	(date 1744055284604)
+@@ -17,6 +17,8 @@
+     circumnavigation = crazyflie_examples.circumnavigation:main
+     plume_rv = crazyflie_examples.plume_rv:main
+     plume_rv_V4 = crazyflie_examples.plume_rv_V4:main
++    sketch_double_plume =  crazyflie_examples.sketch_double_plume:main
++    sketch_single_plume = crazyflie_examples.sketch_single_plume:main
+     cf_2_correccion = crazyflie_examples.cf_2_correccion:main
+     multi_trajectory = crazyflie_examples.multi_trajectory:main
+     cmd_full_state = crazyflie_examples.cmd_full_state:main
+Index: sketch_single_plume.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/sketch_single_plume.py b/sketch_single_plume.py
+new file mode 100644
+--- /dev/null	(date 1744082603599)
++++ b/sketch_single_plume.py	(date 1744082603599)
+@@ -0,0 +1,496 @@
++import rx
++import math
++from crazyflie_examples.sketch import DroneStreamFactory, SketchAction, LatLon, Plume, CO2, \
++    plot_plumes, calculate_co2, calculate_turn_center, rotate_vector,\
++    EARTH_CIRCUMFERENCE, FORWARD, TURN, ReadingPosition, unitary, latlon_plus_meters
++from rx.subject import Subject, BehaviorSubject
++import rx.operators as ops
++import matplotlib.pyplot as plt
++from crazyflie_examples.plot_util import *
++import time
++from datetime import datetime, timedelta
++import pandas as pd
++
++from crazyflie_interfaces.msg import LogDataGeneric
++from crazyflie_py import Crazyswarm
++import rclpy
++import os
++from rclpy.node import Node
++from geometry_msgs.msg import PoseStamped
++import numpy as np
++import math, time
++import matplotlib.pyplot as plt
++from mpl_toolkits.mplot3d import Axes3D
++from shapely.geometry import Polygon, Point
++from geopy.distance import geodesic
++from matplotlib.patches import Polygon as MPolygon
++
++TAKEOFF_DURATION = 2.5
++HOVER_DURATION = 2.0
++
++delta_time =0.6
++
++#EARTH_CIRCUMFERENCE = 40008000
++EARTH_CIRCUMFERENCE = 40075000
++
++t_inicial = 0
++
++class Position_Subscriber(Node):
++    def __init__(self, drone_id, drone_controller):
++        super().__init__('pos_subscriber_{}'.format(drone_id))
++        self.drone_id = drone_id
++        self.drone_controller = drone_controller
++
++        self.subscription = self.create_subscription(
++            PoseStamped,
++            '/{}/pose'.format(drone_id),  # Adjusted to match the format in PART1, replace as necessary
++            self.position_listener_callback,
++            10)
++
++    def position_listener_callback(self, msg):
++        # Update drone_controller's current_position directly
++        self.drone_controller.position = np.append(self.drone_controller.position,[[msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]],axis=0)
++        #print("---------------------------------------------")
++        #print(msg)
++        print(f"{self.drone_id} position", round(msg.pose.position.x, 4),round(msg.pose.position.y, 4),round(msg.pose.position.z, 4))
++
++
++class Velocity_Subscriber(Node):
++    def __init__(self, drone_id, drone_controller):
++        super().__init__('vel_subscriber_{}'.format(drone_id))
++        self.drone_id = drone_id
++        self.drone_controller = drone_controller
++
++        # Subscription to custom Velocity topic
++        self.velocity_subscription = self.create_subscription(
++            LogDataGeneric,
++            '/{}/velocity'.format(drone_id),
++            self.velocity_listener_callback,
++            10)
++
++    def velocity_listener_callback(self, msg):
++        # Update drone_controller's current_velocity based on the custom velocity topic
++        self.drone_controller.velocity = np.append(self.drone_controller.velocity,[[msg.values[0], msg.values[1], msg.values[2]]], axis=0)
++        #print("---------------------------------------------")
++        #print(msg)
++        #print(f"{self.drone_id} velocity", round(msg.values[0], 4), round(msg.values[1], 4), round(msg.values[2], 4))
++        tf = time.time()
++        self.drone_controller.t_velocity = np.append(self.drone_controller.t_velocity,[tf-t_inicial], axis=0)
++
++
++def add_ruler(plt, ax, length):
++    height_scale = 0.7
++    lowerleft = [plt.xlim()[0], plt.ylim()[0]]
++    upperright = [plt.xlim()[1], plt.ylim()[1]]
++
++    # Calculate width by latitide
++    width = abs(1.0 * length / (EARTH_CIRCUMFERENCE / 360))
++    height = (upperright[1] - lowerleft[1]) * 0.018 * height_scale
++
++    location = [plt.xlim()[0] + (plt.xlim()[1] - plt.xlim()[0]) * .05,
++                plt.ylim()[1] - ((plt.ylim()[1] - plt.ylim()[0]) * (0.05 + (height_scale * .04)))]
++
++    ax.add_patch(Rectangle(location, width, height, ec=(0, 0, 0, 1), fc=(1, 1, 1, 1), lw=height_scale))
++    ax.add_patch(Rectangle(location, width / 2, height, ec=(0, 0, 0, 1), fc=(0, 0, 0, 1), lw=height_scale))
++    ax.annotate("0", xy=(location[0], location[1] + (1.5 * height)), ha='center')
++    ax.annotate("{} m".format(length), xy=(location[0] + width, location[1] + (1.5 * height)), ha='center')
++
++
++class Drone:
++
++    def __init__(self, position, max_acceleration_value=0.05):
++        self.start_lat_lon = position
++        self.position = (0, 0, 0)
++        self.velocity = (0, 0, 0)
++        self.acceleration = (0, 0, 0)
++        self.max_acceleration = [max_acceleration_value, max_acceleration_value]
++        self.max_velocity = 0.15
++        self.dt = delta_time
++
++    def update_velocity(self, desired_velocity, cf,uav,aux):
++        velocity_scalar = 5
++        # desired_acceleration = tuple((dv - v) / self.dt for v, dv in zip(self.velocity, desired_velocity))
++        #
++        #
++        # acceleration_magnitude = np.linalg.norm(desired_acceleration)
++        # if acceleration_magnitude > self.max_acceleration[uav]:
++        #     desired_acceleration = tuple(
++        #         a / acceleration_magnitude * self.max_acceleration[uav] for a in desired_acceleration)
++        # print('Desired acc', desired_acceleration, 'velocity', self.velocity)
++        # self.velocity = tuple(v + a * self.dt for v, a in zip(self.velocity, desired_acceleration))
++
++        # 0.75 1.25
++        if uav == 0:
++            altitud = 0.75
++        else:
++            altitud = 1.25
++
++        Kp = 0.1
++        cf.velWorld([velocity_scalar * desired_velocity[0], velocity_scalar * desired_velocity[1], Kp*(altitud-aux[2])], 0.0)
++
++        #print('actual vel: ', self.velocity)
++        '''
++        
++        self.velocity=desired_velocity
++        velocity_magnitude = np.linalg.norm(self.velocity)
++        if velocity_magnitude > self.max_velocity:
++            self.velocity = tuple(
++                v / velocity_magnitude * self.max_velocity for v in self.velocity)
++        
++        #cf.velWorld([self.velocity[0], self.velocity[1], 0.0], 0.0)
++        desired_position = tuple(float(v) + float(a) * self.dt for v, a in zip(aux, self.velocity))
++        print([desired_position[0],desired_position[1],1.0])
++        '''
++        '''
++        
++        '''
++        '''
++        if uav==0:
++            altitud=0.92
++        else:
++            altitud=1.1
++        '''
++        '''
++        cf.goTo([desired_position[0],desired_position[1],altitud], 0.0, delta_time)
++        '''
++
++        '''
++        print('Desired vel',self.velocity)
++        print('Position', cf_position)
++        '''
++        return self.velocity
++
++    def update_position(self, cf_position, crazyflie):
++
++        # if crazyflie == 1:
++        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 0.8) / (
++        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
++        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.2) / (EARTH_CIRCUMFERENCE / 360))
++        # else:
++        #     longitude = self.start_lat_lon.longitude + ((cf_position[0] - 1.2) / (
++        #             math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
++        #     latitude = self.start_lat_lon.latitude + ((cf_position[1] + 1.05) / (EARTH_CIRCUMFERENCE / 360))
++
++        longitude = self.start_lat_lon.longitude + ((cf_position[0]) / (
++                math.cos(self.start_lat_lon.latitude * 0.01745) * (EARTH_CIRCUMFERENCE / 360)))
++        latitude = self.start_lat_lon.latitude + ((cf_position[1]) / (EARTH_CIRCUMFERENCE / 360))
++
++        return LatLon(latitude, longitude)
++
++
++class DroneController:
++    def __init__(self, drone_id, cf, starting_position, time_helper):
++        self.drone_id = drone_id
++        self.cf = cf  # Make sure this is correctly passed as an argument
++        self.position = np.array([[0, 0, 0]])
++        self.velocity = np.array([[0, 0, 0]])
++        self.t_velocity = np.array([0])
++        self.des_velocity = np.array([[0, 0, 0]])
++        self.t_des_velocity = np.array([0])
++        self.time_helper = time_helper  # Ensure this is passed and used correctly
++        self.positions = []
++        self.starting_position = starting_position
++
++    def move_to_start_pos(self, duration):  # Remove unnecessary parameters
++        self.cf.goTo(self.starting_position, 0.0, duration)
++
++    def stop_setpoint(self):
++        self.cf.notifySetpointsStop()
++
++
++def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, base_file_name=None,
++               starting_direction=None, latest_gradient=None, zoom=None):
++    swarm = Crazyswarm()
++    timeHelper = swarm.timeHelper
++    allcfs = swarm.allcfs
++
++    global t_inicial
++    df1v = (0, 0, 0)
++    df2v = (0, 0, 0)
++    streamFactory = DroneStreamFactory()
++    announceStream = Subject()
++    df1SetVelocity = BehaviorSubject([0, 1])
++    df2SetVelocity = BehaviorSubject([0, 1])
++    sketchSubject = Subject()
++    vector1Publisher = Subject()
++    vector2Publisher = Subject()
++    df1Position = Subject()
++    df1Velocity = Subject()
++    df2Position = Subject()
++    df2Velocity = Subject()
++    df1co2 = Subject()
++    df2co2 = Subject()
++    streamFactory.put_drone("DF1", df1Position, df1Velocity, df1co2)
++    streamFactory.put_drone("DF2", df2Position, df1Velocity, df2co2)
++
++    action1 = SketchAction("DF1", df1SetVelocity, announceStream, offset, lambda_value, "DF2", True, threshold,
++                           streamFactory, sketchSubject, vector1Publisher, starting_direction, latest_gradient)
++    action2 = SketchAction("DF2", df2SetVelocity, announceStream, offset, lambda_value, "DF1", False, threshold,
++                           streamFactory, sketchSubject, vector2Publisher, starting_direction, latest_gradient)
++
++    action1.step()
++    action2.step()
++
++    df1 = Drone(df1p)
++    df2 = Drone(df2p)
++
++    df1latitudes = []
++    df2latitudes = []
++    df1longitudes = []
++    df2longitudes = []
++
++    unique_tokens = set()
++
++    scale = 0.012
++    arrow_head_width = 0.00002*scale
++    arrow_head_height = arrow_head_width
++    arrow_width = 0.000002*scale
++    arrow_length = 0.00005*scale
++
++    cf0 = allcfs.crazyflies[0]
++    cf1 = allcfs.crazyflies[1]
++    drone1_id = 'cf_1'
++    drone2_id = 'cf_2'
++
++    timeHelper.sleep(1.0)
++    configs = [
++        {'drone_id': drone1_id, 'starting_position': [1.0, -0.95, 0.75]},
++        {'drone_id': drone2_id, 'starting_position': [1.2, -0.95, 1.25]}
++    ]
++    Pos_subscribers = {}  # Dictionary to keep track of subscribers
++    Vel_subscribers = {}
++    drones = []
++    for i, cf in enumerate(allcfs.crazyflies):
++        drone_id = configs[i]['drone_id']
++        drone = DroneController(drone_id, cf, configs[i]['starting_position'], timeHelper)
++        Pos_subscribers[drone_id] = Position_Subscriber(drone_id, drone)
++        Vel_subscribers[drone_id] = Velocity_Subscriber(drone_id, drone)
++        drones.append(drone)
++    
++
++    t_inicial = time.time()
++
++    for drone in drones:
++        rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
++        rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)
++
++    def add_algorithm_details(token):
++        #         if hasattr(token, 'vector_to_crossing') and hasattr(token, 'updated_position'):
++        #             plt.arrow(token.updated_position.longitude, token.updated_position.latitude, token.vector_to_crossing[0] * arrow_length, token.vector_to_crossing[1] * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height, width=arrow_width, fc='m', ec='m')
++        #             [dx, dy] = rotate_vector([token.x, token.y], (token.a * token.p))
++
++        #             plt.arrow(token.updated_position.longitude, token.updated_position.latitude, dx * arrow_length, dy * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height, width=arrow_width, fc='b', ec='b')
++        if not token in unique_tokens:
++            if token.movement == FORWARD:
++                plt.arrow(token.position.longitude, token.position.latitude, token.x * arrow_length,
++                          token.y * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height,
++                          width=arrow_width, fc='k', ec='k')
++            if token.movement == TURN:
++                center = calculate_turn_center(token, offset * lambda_value / math.sqrt(lambda_value))
++                plt.scatter(center.longitude, center.latitude, color='k', marker='+')
++                plt.arrow(token.position.longitude, token.position.latitude, token.x * arrow_length,
++                          token.y * arrow_length, head_width=arrow_head_width, head_length=arrow_head_height,
++                          width=arrow_width, fc='b', ec='b')
++
++            if hasattr(token, 'gradient'):
++                plt.arrow(token.position.longitude, token.position.latitude, token.gradient[0] * 0.00005*scale,
++                          token.gradient[1] * 0.00005*scale, head_width=0.00002*scale, head_length=0.00002*scale, width=0.000002*scale, fc='r',
++                          ec='r')
++
++            #             if hasattr(token, 'prev_pt'):
++            #                 print("prev5_pt")
++            #                 plt.scatter(token.prev_pt.longitude, token.prev_pt.latitude, color='k', s=5)
++
++            unique_tokens.add(token)
++
++    sketchSubject.subscribe(on_next=add_algorithm_details)
++
++    plt.figure(1,figsize=(10, 8))
++    plt.ticklabel_format(style='plain', useOffset=False)
++
++    experiment_directory= plot_plumes(plt, threshold, lon=[-106.59725, -106.59714], lat=[35.19725, 35.19732], plumes=plumes)
++
++    for plume in plumes:
++        plt.plot(plume.source.longitude, plume.source.latitude, marker='*', c='r', markeredgewidth=1,
++                 markeredgecolor=(0, 0, 0, 1), markersize=10)
++
++    starting_time = datetime(2020,1,1)
++    
++    for drone in drones:
++            rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)
++            rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
++
++    try:
++        timeHelper.sleep(0.1)
++        allcfs.takeoff(targetHeight=0.5, duration=TAKEOFF_DURATION)
++        timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
++
++        # Move all drones to their starting positions
++        for drone in drones:
++            drone.move_to_start_pos(6.0)
++
++        timeHelper.sleep(9.0)
++        for i in range(iterations):
++            # print(i)
++            for drone in drones:
++                rclpy.spin_once(Vel_subscribers[drone.drone_id], timeout_sec=0.1)
++                rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
++                if drone.drone_id == drone1_id:
++                    aux1 = drone.position[-1, :]
++                    df1v = drone.velocity[-1, :]
++                    print(df1v)
++                    df1p = df1.update_position(drone.position[-1, :], 1)
++                elif drone.drone_id == drone2_id:
++                    df2p = df2.update_position(drone.position[-1, :], 2)
++                    aux2 = drone.position[-1, :]
++
++            current_time = (starting_time + timedelta(seconds=i * 0.1))
++            df1co2v = calculate_co2(df1p, plumes)
++            df2co2v = calculate_co2(df2p, plumes)
++            df1Position.on_next([df1p, current_time])
++            df1Velocity.on_next([df1v, current_time])
++            df1co2.on_next([CO2(df1co2v), current_time])
++            df2Position.on_next([df2p, current_time])
++            df2Velocity.on_next([df2v, current_time])
++            df2co2.on_next([CO2(df2co2v), current_time])
++
++            print(i)
++
++
++            for drone in drones:
++                if drone.drone_id == drone1_id:
++                    df1v_des = df1.update_velocity(np.array(df1SetVelocity.pipe(ops.first()).run()) /65, cf0,0,aux1)
++                    drone.des_velocity = np.append(drone.des_velocity,[[df1v_des [0], df1v_des [1], 0]], axis=0)
++                    tf = time.time()
++                    drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)
++                elif drone.drone_id == drone2_id:
++                    df2v_des = df2.update_velocity(np.array(df2SetVelocity.pipe(ops.first()).run()) /65, cf1,1,aux2)
++                    drone.des_velocity = np.append(drone.des_velocity, [[df2v_des[0], df2v_des[1], 0]], axis=0)
++                    tf = time.time()
++                    drone.t_des_velocity = np.append(drone.t_des_velocity, [tf - t_inicial], axis=0)
++
++            df1latitudes.append(df1p.latitude)
++            df1longitudes.append(df1p.longitude)
++            df2latitudes.append(df2p.latitude)
++            df2longitudes.append(df2p.longitude)
++
++            timeHelper.sleep(0.0)
++
++    except KeyboardInterrupt:
++        print("Keyboard interrupt, triggering landing sequence")
++
++    time.sleep(0.1)
++    cf0.notifySetpointsStop()
++    cf1.notifySetpointsStop()
++    time.sleep(0.05)
++    allcfs.land(targetHeight=0.03, duration=5.0)
++    time.sleep(6.0)
++
++    plt.scatter(df1longitudes, df1latitudes, s=4)
++    plt.scatter(df2longitudes, df2latitudes, s=4)
++    plt.axis('equal')
++    plt.grid()
++
++    add_ruler(plt, plt.gca(), 0.5)
++    
++    plt.gca().xaxis.set_visible(False)
++    plt.gca().yaxis.set_visible(False)
++
++    if zoom is not None:
++        plt.xlim(zoom[1])  # -106.5960, -106.5958
++        plt.ylim(zoom[0])  # 35.1959, 35.1963
++
++
++    base_directory = experiment_directory
++
++    if base_file_name is not None:
++        plt.savefig(f'{experiment_directory}/python_sim_small3.pdf', format="pdf", dpi=1000)
++
++    # Ensure the experiment directory exists
++    os.makedirs(experiment_directory, exist_ok=True)
++
++    filename = os.path.join(experiment_directory, f"drone1_latitude_trajectory.csv")
++
++    df = pd.DataFrame(df1latitudes)
++    df.to_csv(filename, index=False)
++
++    filename = os.path.join(experiment_directory, f"drone2_latitude_trajectory.csv")
++
++    df = pd.DataFrame(df2latitudes)
++    df.to_csv(filename, index=False)
++
++    filename = os.path.join(experiment_directory, f"drone1_longitude_trajectory.csv")
++
++    df = pd.DataFrame(df1longitudes)
++    df.to_csv(filename, index=False)
++
++    filename = os.path.join(experiment_directory, f"drone2_longitude_trajectory.csv")
++
++    df = pd.DataFrame(df2longitudes)
++    df.to_csv(filename, index=False) 
++
++    for subscriber in Pos_subscribers.values():
++        subscriber.destroy_node()
++
++    for subscriber in Vel_subscribers.values():
++        subscriber.destroy_node()
++    plt.show()
++
++    rclpy.shutdown()
++
++def plot_plumes_temp(df1p, df2p, threshold, plumes):
++
++
++    plt.figure(1, figsize=(10, 8))
++    plt.ticklabel_format(style='plain', useOffset=False)
++
++    for i in range(1):
++        print(threshold + (i*10))
++        plot_plumes(plt, threshold + (i * 10), lon=[-106.59725, -106.59714], lat=[35.19725, 35.19732],
++                                       plumes=plumes)
++
++    for plume in plumes:
++        plt.plot(plume.source.longitude, plume.source.latitude, marker='*', c='r', markeredgewidth=1,
++                 markeredgecolor=(0, 0, 0, 1), markersize=10)
++
++    df1latitudes = []
++    df2latitudes = []
++    df1longitudes = []
++    df2longitudes = []
++
++    df1latitudes.append(df1p.latitude)
++    df1longitudes.append(df1p.longitude)
++    df2latitudes.append(df2p.latitude)
++    df2longitudes.append(df2p.longitude)
++
++    plt.scatter(df1longitudes, df1latitudes, s=4)
++    plt.scatter(df2longitudes, df2latitudes, s=4)
++    plt.axis('equal')
++    plt.grid()
++
++    add_ruler(plt, plt.gca(), 3.5)
++
++    plt.gca().xaxis.set_visible(False)
++    plt.gca().yaxis.set_visible(False)
++
++
++    plt.show()
++
++    rclpy.shutdown()
++
++def main(args=None) -> None:
++    plumes = [
++        Plume(LatLon(35.197297, -106.597186), -30, 12000, 2.0)
++    ]
++
++    threshold = 680
++
++    df1p = LatLon(35.197285, -106.597181)
++    df2p = LatLon(35.197285, -106.597181)
++
++
++    run_sketch(df1p, df2p, 0.2, 0.005, plumes, threshold, iterations=6000, base_file_name='single_plume')
++    #plot_plumes_temp(df1p, df2p, threshold, plumes)
++
++if __name__ == "__main__":
++    main()

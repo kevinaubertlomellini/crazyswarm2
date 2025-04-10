@@ -747,7 +747,7 @@ class SketchAction:
         offset_magnitude = magnitude(position_offset)
 
         #tandem_distance = position_offset * (2 / max(0.015, offset_magnitude))
-        tandem_distance = position_offset * (0.5 / max(0.1, offset_magnitude))
+        tandem_distance = position_offset * (0.9/ max(0.1, offset_magnitude))
         return tandem_distance
 
     @staticmethod
@@ -768,7 +768,7 @@ class SketchAction:
 
             offset_unitary = unitary(difference_in_meters(self_position, partner_position))
 
-            return -2 * np.dot(offset_unitary, direction) * direction
+            return -0.4* np.dot(offset_unitary, direction) * direction
         else:
             return [0, 0]
 
@@ -788,7 +788,7 @@ class SketchAction:
             self_center_distance = magnitude(self_center)
             partner_center_distance = magnitude(difference_in_meters(center, partner_position))
 
-            base_velocity = 1
+            base_velocity = 1.0
 
             if self_center_distance > partner_center_distance:
                 velocity = base_velocity
@@ -880,12 +880,8 @@ def plot_plumes(plt, threshold, plumes, lon=[-106.598, -106.595], lat=[35.195, 3
     lonRes = ((lon[1] - lon[0]) / scale)
     latRes = ((lat[1] - lat[0]) / scale)
 
-    contour = plume_contour(threshold, plumes, lon=lon, lat=lat, scale=scale)
-    lon0=contour[0][:, 0] * lonRes + lon[0]
-    lat0=contour[0][:, 1] * latRes + lat[0]
-
     # Base directory where all files will be saved
-    base_directory = "/home/marhes_1/VolCAN/Data_simulation_double_plume"
+    base_directory = "/home/marhes_1/VolCAN/Data_simulation_single_plume"
 
     # Get the current time and format it as a string suitable for directory naming
     experiment_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -897,16 +893,20 @@ def plot_plumes(plt, threshold, plumes, lon=[-106.598, -106.595], lat=[35.195, 3
     os.makedirs(experiment_directory, exist_ok=True)
 
     filename = os.path.join(experiment_directory, f"lon0_plume.csv")
+    contour = plume_contour(threshold, plumes, lon=lon, lat=lat, scale=scale)
 
-    df = pd.DataFrame(lon0)
-    df.to_csv(filename, index=False)
+    if (len(contour) > 0):
+        lon0 = contour[0][:, 0] * lonRes + lon[0]
+        lat0 = contour[0][:, 1] * latRes + lat[0]
 
-    filename = os.path.join(experiment_directory, f"lat0_plume.csv")
+        df = pd.DataFrame(lon0)
+        df.to_csv(filename, index=False)
 
-    df = pd.DataFrame(lat0)
-    df.to_csv(filename, index=False)
+        filename = os.path.join(experiment_directory, f"lat0_plume.csv")
 
-    if len(contour) > 0:
+        df = pd.DataFrame(lat0)
+        df.to_csv(filename, index=False)
+
         ax.plot(contour[0][:, 0] * lonRes + lon[0], contour[0][:, 1] * latRes + lat[0], linewidth=3, color="lightgreen",
                 zorder=-1, label="Plume boundary")
 

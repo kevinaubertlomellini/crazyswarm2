@@ -245,8 +245,8 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
 
     timeHelper.sleep(1.0)
     configs = [
-        {'drone_id': drone1_id, 'starting_position': [0.8, -1.2, 1.0]},
-        {'drone_id': drone2_id, 'starting_position': [1.2, -1.05, 1.0]}
+        {'drone_id': drone1_id, 'starting_position': [0.8, -1.1, 1.0]},
+        {'drone_id': drone2_id, 'starting_position': [1.15, -0.95, 1.15]}
     ]
     Pos_subscribers = {}  # Dictionary to keep track of subscribers
     Vel_subscribers = {}
@@ -312,7 +312,7 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
             rclpy.spin_once(Pos_subscribers[drone.drone_id], timeout_sec=0.1)
 
     try:
-        timeHelper.sleep(7.0)
+        timeHelper.sleep(0.1)
         allcfs.takeoff(targetHeight=0.5, duration=TAKEOFF_DURATION)
         timeHelper.sleep(TAKEOFF_DURATION + HOVER_DURATION)
 
@@ -365,7 +365,7 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
             df2latitudes.append(df2p.latitude)
             df2longitudes.append(df2p.longitude)
 
-            timeHelper.sleep(0.1)
+            timeHelper.sleep(0.0)
 
     except KeyboardInterrupt:
         print("Keyboard interrupt, triggering landing sequence")
@@ -382,7 +382,7 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
     plt.axis('equal')
     plt.grid()
 
-    add_ruler(plt, plt.gca(), 0.5)
+    add_ruler(plt, plt.gca(), 3.5)
     
     plt.gca().xaxis.set_visible(False)
     plt.gca().yaxis.set_visible(False)
@@ -418,7 +418,7 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
     filename = os.path.join(experiment_directory, f"drone2_longitude_trajectory.csv")
 
     df = pd.DataFrame(df2longitudes)
-    df.to_csv(filename, index=False) 
+    df.to_csv(filename, index=False)
 
     for subscriber in Pos_subscribers.values():
         subscriber.destroy_node()
@@ -431,15 +431,15 @@ def run_sketch(df1p, df2p, offset, lambda_value, plumes, threshold, iterations, 
 
 def main(args=None) -> None:
     plumes = [
-        Plume(LatLon(35.1973, -106.59719), -30, 12000, 2.0)
+        Plume(LatLon(35.197297, -106.597186), -30, 12000, 2.0)
     ]
 
-    threshold = 640
+    threshold = 660
 
-    df1p = LatLon(35.197283, -106.5971785)
-    df2p = LatLon(35.197283, -106.5971785)
+    df1p = LatLon(35.197218, -106.5971329)
+    df2p = LatLon(35.197218, -106.5971329)
 
-    run_sketch(df1p, df2p, 0.4, 0.01, plumes, threshold, iterations=1300, base_file_name='single_plume')
+    run_sketch(df1p, df2p, 0.35, 0.001, plumes, threshold, iterations=10000, base_file_name='single_plume')
 
 if __name__ == "__main__":
     main()

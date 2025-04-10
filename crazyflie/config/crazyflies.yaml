@@ -15,7 +15,7 @@ robots:
     enabled: true
     #uri: radio://0/100/2M/E7E7E7E701
     uri: udp://0.0.0.0:19850
-    initial_position: [0.0, 0.0, 0.0]
+    initial_position: [-0.3, 0.0, 0.0]
     type: cf_sim  # see robot_types
     # firmware_params:
       # posCtlPid:
@@ -27,7 +27,7 @@ robots:
     enabled: true
     #uri: radio://0/100/2M/E7E7E7E707
     uri: udp://0.0.0.0:19851
-    initial_position: [-0.3,0.0, 0.0]
+    initial_position: [0.3,0.0, 0.0]
     type: cf_sim2  # see robot_types
 
   cf_3:
